@@ -27,10 +27,12 @@ canvas { touch-action:none; display:block; }
 .loader-bar { width:280px; height:4px; background:#16213e; border-radius:2px; overflow:hidden; }
 .loader-bar .fill { height:100%; width:0%; background:linear-gradient(90deg,#e94560,#0f3460); border-radius:2px; transition:width .3s; }
 #loading p { margin-top:12px; font-size:13px; color:#888; }
-#controls { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); display:flex; gap:12px; align-items:center; z-index:50; background:rgba(0,0,0,.5); backdrop-filter:blur(10px); padding:10px 20px; border-radius:30px; border:1px solid rgba(255,255,255,.1); }
+#controls { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); display:flex; gap:10px; align-items:center; z-index:50; background:rgba(0,0,0,.5); backdrop-filter:blur(10px); padding:10px 14px; border-radius:30px; border:1px solid rgba(255,255,255,.1); }
 #controls button { width:44px; height:44px; border-radius:50%; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:#fff; font-size:20px; cursor:pointer; transition:all .2s; display:flex; align-items:center; justify-content:center; }
 #controls button:hover { background:rgba(255,255,255,.2); }
 #controls button:active { transform:scale(.9); }
+#danceSelect { max-width:145px; padding:7px 25px 7px 10px; border:1px solid rgba(255,255,255,.2); border-radius:16px; background:rgba(255,255,255,.08); color:#fff; font-size:12px; cursor:pointer; appearance:auto; }
+#danceSelect option { background:#1a1a2e; color:#fff; }
 #controls .time { font-size:12px; color:#aaa; min-width:80px; text-align:center; font-variant-numeric:tabular-nums; }
 #info { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:50; background:rgba(0,0,0,.4); backdrop-filter:blur(8px); padding:6px 16px; border-radius:20px; font-size:12px; color:#ccc; white-space:nowrap; border:1px solid rgba(255,255,255,.06); pointer-events:none; }
 #ver { position:fixed; bottom:6px; right:8px; z-index:50; font-size:10px; color:rgba(255,255,255,.2); pointer-events:none; user-select:none; -webkit-user-select:none; }
@@ -43,8 +45,12 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-<div id="ver">v20260711.031500</div>
+<div id="ver">v20260711.033000</div>
 <div id="controls">
+  <select id="danceSelect" aria-label="选择舞蹈">
+    <option value="jiuzui">酒醉的蝴蝶</option>
+    <option value="wavefile">默认舞蹈（wavefile）</option>
+  </select>
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
 </div>
@@ -74,17 +80,29 @@ function patchShaderMaterial(mat) {
 
 // ─── Config ──────────────────────────────────────────
 const VMD_FPS = 30;
-const cfg = {
-  modelPath: './models/猫女郎.vrm',
-  vmdPaths: ['./vmd/兰若酒醉的蝴蝶mmd数据.vmd'],
-  audioPath: './audio/酒醉的蝴蝶音频.wav',
+const cfg = { modelPath: './models/猫女郎.vrm' };
+const dances = {
+  jiuzui: {
+    title: '酒醉的蝴蝶',
+    vmdPath: './vmd/兰若酒醉的蝴蝶mmd数据.vmd',
+    audioPath: './audio/酒醉的蝴蝶音频.wav',
+  },
+  // Copied verbatim from mmd-viewer-mobile's default dance pairing.
+  wavefile: {
+    title: '默认舞蹈（wavefile）',
+    vmdPath: './vmd/default_wavefile_dance.vmd',
+    audioPath: './audio/default_wavefile_music.mp3',
+  },
 };
+let selectedDanceKey = 'jiuzui';
 
 // ─── DOM ─────────────────────────────────────────────
 const loadingEl = document.getElementById('loading');
 const progressFill = document.getElementById('progress-fill');
 const statusText = document.getElementById('status-text');
 const btnPlay = document.getElementById('btnPlay');
+const danceSelect = document.getElementById('danceSelect');
+const infoEl = document.getElementById('info');
 const timeDisplay = document.getElementById('timeDisplay');
 
 function setProgress(pct, msg) {
@@ -171,9 +189,9 @@ async function loadVRM() {
 // 这里使用已验证的 VMD→BVH→VRMA 管线，让 createVRMAnimationClip 处理骨骼重定向。
 let vmdClip, mixer, action;
 
-async function loadVMD() {
-  setProgress(55,'解析并转换 VMD 动作...');
-  const resp=await fetch(cfg.vmdPaths[0]);
+async function loadVMD(dance) {
+  setProgress(55,`解析并转换：${dance.title}...`);
+  const resp=await fetch(dance.vmdPath);
   if(!resp.ok) throw new Error(`VMD 下载失败 (${resp.status})`);
   const buffer=await resp.arrayBuffer();
   setProgress(62,'VMD → BVH 骨骼重定向...');
@@ -254,26 +272,30 @@ async function loadVMD() {
   setProgress(85,`VMD 转换完成（${vmdClip.duration.toFixed(1)}秒）`);
 }
 
-// ─── Audio ────────────────────────────────────────────
+// ─── Audio + dance switching ─────────────────────────
 let audioCtx,audioBuffer,sourceNode,gainNode,isAudioReady;
 
-async function loadAudio() {
-  setProgress(85,'加载音频...');
-  const resp=await fetch(cfg.audioPath);
-  audioCtx=new AudioContext();
+function stopAudio() {
+  if(sourceNode){ try{sourceNode.stop()}catch(e){} sourceNode=null; }
+}
+
+async function loadAudio(dance) {
+  setProgress(85,`加载音乐：${dance.title}...`);
+  const resp=await fetch(dance.audioPath);
+  if(!resp.ok) throw new Error(`音乐下载失败 (${resp.status})`);
+  if(!audioCtx) audioCtx=new AudioContext();
   audioBuffer=await audioCtx.decodeAudioData(await resp.arrayBuffer());
-  gainNode=audioCtx.createGain(); gainNode.gain.value=0.7; gainNode.connect(audioCtx.destination);
+  if(!gainNode){ gainNode=audioCtx.createGain(); gainNode.gain.value=0.7; gainNode.connect(audioCtx.destination); }
   isAudioReady=true;
-  setProgress(100,'加载完成 ✓');
-  setTimeout(()=>loadingEl.classList.add('hidden'),500);
 }
 
 // ─── Playback (standard VRMA retargeting) ─────────────
 let isPlaying=false;
+let danceLoading=false;
 const clock=new THREE.Clock();
 
 function startPlayback(){
-  if(!vmdClip||!mixer)return;
+  if(!vmdClip||!mixer||danceLoading)return;
   // First click creates the action. Later clicks resume the same action and
   // preserve action.time — this control is pause/resume, never stop/restart.
   if(!action){
@@ -286,6 +308,7 @@ function startPlayback(){
   }
   isPlaying=true;
   if(isAudioReady&&audioBuffer){
+    stopAudio();
     sourceNode=audioCtx.createBufferSource(); sourceNode.buffer=audioBuffer;
     sourceNode.connect(gainNode);
     sourceNode.start(0,(action.time||0)%audioBuffer.duration);
@@ -299,8 +322,36 @@ function pausePlayback(){
   // so stop audio only and recreate it from action.time when resuming.
   action.paused=true;
   isPlaying=false;
-  if(sourceNode){try{sourceNode.stop()}catch(e){}sourceNode=null}
+  stopAudio();
   btnPlay.textContent='▶';
+}
+
+async function loadDance(key, { autoplay = false, initial = false } = {}) {
+  const dance=dances[key];
+  if(!dance || !vrm) return;
+  danceLoading=true;
+  danceSelect.disabled=true;
+  btnPlay.disabled=true;
+  const wasPlaying=isPlaying;
+  pausePlayback();
+  if(action){ action.stop(); action=null; }
+  if(mixer){ mixer.stopAllAction(); mixer.uncacheRoot(vrm.scene); }
+  mixer=null; vmdClip=null; audioBuffer=null; isAudioReady=false;
+  try {
+    await loadVMD(dance);
+    await loadAudio(dance);
+    selectedDanceKey=key;
+    danceSelect.value=key;
+    infoEl.textContent=`🐱 猫女郎 · ${dance.title}`;
+    if(initial){ setProgress(100,'加载完成 ✓'); setTimeout(()=>loadingEl.classList.add('hidden'),500); }
+    // Release the loading gate before autoplaying the fresh action.
+    danceLoading=false;
+    if(autoplay || wasPlaying) startPlayback();
+  } finally {
+    danceLoading=false;
+    danceSelect.disabled=false;
+    btnPlay.disabled=false;
+  }
 }
 
 function animate(){
@@ -327,13 +378,21 @@ btnPlay.addEventListener('click',async()=>{
   else startPlayback();
 });
 
+danceSelect.addEventListener('change', async () => {
+  try {
+    await loadDance(danceSelect.value, { autoplay: true });
+  } catch (err) {
+    statusText.textContent='❌ '+err.message; console.error(err);
+  }
+});
+
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);
 });
 
 (async()=>{
   try{
-    await loadVRM(); await loadVMD(); await loadAudio(); animate();
+    await loadVRM(); await loadDance(selectedDanceKey, { initial: true }); animate();
     setTimeout(startPlayback,1500);
   }catch(err){
     statusText.textContent='❌ '+err.message; console.error(err);
