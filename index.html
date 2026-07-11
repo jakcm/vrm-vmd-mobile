@@ -219,14 +219,9 @@ async function loadVRM() {
   vrm = gltf.userData.vrm;
   vrmScene = gltf.scene;
 
-  // Following vrm-viewer-mobile's exact cleanup pattern
   THREEVRM.VRMUtils.removeUnnecessaryVertices(vrmScene);
   THREEVRM.VRMUtils.combineSkeletons(vrmScene);
   THREEVRM.VRMUtils.combineMorphs(vrm);
-
-  vrmScene.traverse(obj => {
-    obj.frustumCulled = false;
-  });
 
   // Normalize height
   const box = new THREE.Box3().setFromObject(vrmScene);
@@ -236,51 +231,51 @@ async function loadVRM() {
   vrmScene.position.y = 0;
   vrmScene.rotation.y = Math.PI;
 
-  scene.add(vrmScene);
-
-  // ── Convert MToon ShaderMaterial to MeshStandardMaterial ──
+  // ── Convert ALL materials to MeshStandardMaterial ──
   vrmScene.traverse(child => {
     if (!child.isMesh) return;
     child.frustumCulled = false;
     const mats = Array.isArray(child.material) ? child.material : [child.material];
     mats.forEach((mat, i) => {
-      if (mat.type !== 'ShaderMaterial') return;
+      // Extract texture from uniforms first
+      let mainTex = null;
+      let tintColor = new THREE.Color(0xffffff);
+      if (mat.uniforms) {
+        if (mat.uniforms._MainTex?.value) mainTex = mat.uniforms._MainTex.value;
+        else if (mat.uniforms._ShadeTexture?.value) mainTex = mat.uniforms._ShadeTexture.value;
+        else if (mat.uniforms._MultiplyTexture?.value) mainTex = mat.uniforms._MultiplyTexture.value;
+        if (mat.uniforms._Color?.value) tintColor.copy(mat.uniforms._Color.value);
+      }
+      // Also check material.map
+      if (!mainTex && mat.map) mainTex = mat.map;
+
       const newMat = new THREE.MeshStandardMaterial({
         roughness: 0.85,
         metalness: 0.0,
-        side: mat.side,
-        transparent: mat.transparent,
-        opacity: mat.opacity,
+        side: mat.side || THREE.FrontSide,
+        transparent: !!mat.transparent,
+        opacity: mat.opacity ?? 1.0,
         depthWrite: mat.depthWrite ?? true,
-        color: mat.color || 0xffffff,
+        color: tintColor,
       });
-      // Extract MToon main texture from uniforms
-      if (mat.uniforms) {
-        if (mat.uniforms._MainTex?.value) newMat.map = mat.uniforms._MainTex.value;
-        else if (mat.uniforms._ShadeTexture?.value) newMat.map = mat.uniforms._ShadeTexture.value;
-        else if (mat.uniforms._MultiplyTexture?.value) newMat.map = mat.uniforms._MultiplyTexture.value;
-        if (mat.uniforms._Color?.value) newMat.color.copy(mat.uniforms._Color.value);
-        if (mat.uniforms._ShadeColor?.value) newMat.color.lerp(mat.uniforms._ShadeColor.value, 0.5);
-        // Emission
-        if (mat.uniforms._EmissionMap?.value) newMat.emissiveMap = mat.uniforms._EmissionMap.value;
-        if (mat.uniforms._EmissionColor?.value) newMat.emissive.copy(mat.uniforms._EmissionColor.value);
-        // Normal
-        if (mat.uniforms._BumpMap?.value) newMat.normalMap = mat.uniforms._BumpMap.value;
+
+      if (mainTex) {
+        mainTex.colorSpace = THREE.SRGBColorSpace;
+        mainTex.needsUpdate = true;
+        // Force texture encoding
+        if (mainTex.encoding !== undefined) {
+          mainTex.encoding = THREE.sRGBEncoding;
+        }
+        newMat.map = mainTex;
       }
-      // Fallback: grab map directly from material (some VRM exports put it there)
-      if (!newMat.map && mat.map) newMat.map = mat.map;
-      // Ensure texture is properly configured
-      if (newMat.map) {
-        newMat.map.colorSpace = THREE.SRGBColorSpace;
-        newMat.map.needsUpdate = true;
-      }
-      // Dispose old shader material
-      mat.dispose();
+
       if (Array.isArray(child.material)) child.material[i] = newMat;
       else child.material = newMat;
+      if (mat.dispose) mat.dispose();
     });
   });
 
+  scene.add(vrmScene);
   vrm.update(0);
 
   setProgress(55, 'VRM 加载完成');
