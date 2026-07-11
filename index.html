@@ -11,7 +11,8 @@
     "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/",
     "three/addons/loaders/MMDLoader.js": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/loaders/MMDLoader.js",
-    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js"
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
+    "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3/lib/three-vrm-animation.module.min.js"
   }
 }
 </script>
@@ -42,7 +43,7 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-<div id="ver">v20260711004909</div>
+<div id="ver">v20260711.005821</div>
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
@@ -51,8 +52,12 @@ canvas { touch-action:none; display:block; }
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
+import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation';
+import { Parser } from './libs/mmdparser.module.js';
+import { vmdToBVH } from './libs/VMD_to_BVH.js';
+import { BVHLoader } from './libs/BVHLoader.js';
+import { convertBVHToVRMAnimation } from './libs/convertBVHToVRMAnimation.js';
 
 // ─── Patch MToon shader (getShadow compat with r176) ──
 function patchShaderMaterial(mat) {
@@ -138,6 +143,7 @@ async function loadVRM() {
   setProgress(10,'加载 VRM 模型...');
   const loader=new GLTFLoader();
   loader.register(p=>new THREEVRM.VRMLoaderPlugin(p));
+  loader.register(p=>new VRMAnimationLoaderPlugin(p));
   const gltf = await new Promise((res,rej)=>{
     loader.load(cfg.modelPath, res, xhr=>{
       setProgress(10+(xhr.loaded/xhr.total)*40,`VRM ${Math.round(xhr.loaded/1024)}KB`);
@@ -160,48 +166,40 @@ async function loadVRM() {
   setProgress(55,'VRM 加载完成');
 }
 
-// ─── VMD Load (MMDLoader from r171) ──────────────────
-let vmdData;
+// ─── VMD → BVH → VRMA (vrm-viewer-mobile conversion pipeline) ──
+// 直接把 MMD 局部四元数塞给 VRM 会遗漏坐标系和 bind-pose 差异，典型症状就是膝盖翻向身后。
+// 这里使用已验证的 VMD→BVH→VRMA 管线，让 createVRMAnimationClip 处理骨骼重定向。
+let vmdClip, mixer, action;
 
 async function loadVMD() {
-  setProgress(55,'加载 VMD 动作...');
-  const loader=new MMDLoader();
-  vmdData=await new Promise((res,rej)=>{
-    loader.loadVMD(cfg.vmdPaths[0], res, xhr=>{
-      setProgress(55+(xhr.loaded/xhr.total)*25,`VMD ${Math.round(xhr.loaded/1024)}KB`);
-    }, rej);
-  });
+  setProgress(55,'解析并转换 VMD 动作...');
+  const resp=await fetch(cfg.vmdPaths[0]);
+  if(!resp.ok) throw new Error(`VMD 下载失败 (${resp.status})`);
+  const buffer=await resp.arrayBuffer();
+  setProgress(62,'VMD → BVH 骨骼重定向...');
 
-  // Normalize CDN output format differences
-  if(!vmdData.bones&&vmdData.motions) vmdData.bones=vmdData.motions;
-  if(vmdData.bones) vmdData.bones.forEach(kf=>{
-    if(kf.boneName!==undefined&&kf.name===undefined) kf.name=kf.boneName;
-    if(kf.frameNum!==undefined&&kf.frame===undefined) kf.frame=kf.frameNum;
-  });
+  const parser=new Parser();
+  const vmd=parser.parseVmd(buffer);
+  // 使用与 vrm-viewer-mobile 一致的标准 VRM 骨架转换，避免膝盖/手臂轴向翻转。
+  const bvhText=vmdToBVH(vmd,vrm,{fps:30,scale:0.1});
+  const bvh=new BVHLoader().parse(bvhText);
+  setProgress(73,'BVH → VRMA 动画...');
+  const vrmaBuffer=await convertBVHToVRMAnimation(bvh,{scale:0.01});
 
-  // Build bone tracks
-  const boneTracks={};
-  if(vmdData.bones) vmdData.bones.forEach(kf=>{
-    if(!boneTracks[kf.name]) boneTracks[kf.name]=[];
-    boneTracks[kf.name].push(kf);
-  });
-  Object.values(boneTracks).forEach(t=>t.sort((a,b)=>a.frame-b.frame));
-  vmdData._boneTracks=boneTracks;
+  const animationLoader=new GLTFLoader();
+  animationLoader.register(p=>new VRMAnimationLoaderPlugin(p));
+  const blobUrl=URL.createObjectURL(new Blob([vrmaBuffer],{type:'model/gltf-binary'}));
+  try {
+    const animationGltf=await new Promise((res,rej)=>animationLoader.load(blobUrl,res,undefined,rej));
+    const data=animationGltf.userData.vrmAnimations?.[0];
+    if(!data) throw new Error('转换后的 VRMA 不含动画数据');
+    vmdClip=createVRMAnimationClip(data,vrm);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 
-  // Morph tracks
-  const morphTracks={};
-  if(vmdData.morphs) vmdData.morphs.forEach(kf=>{
-    if(!morphTracks[kf.name]) morphTracks[kf.name]=[];
-    morphTracks[kf.name].push(kf);
-  });
-  Object.values(morphTracks).forEach(t=>t.sort((a,b)=>a.frame-b.frame));
-  vmdData._morphTracks=morphTracks;
-
-  // Total frames
-  vmdData.totalFrames=0;
-  if(vmdData.bones) vmdData.bones.forEach(kf=>{if(kf.frame>vmdData.totalFrames) vmdData.totalFrames=kf.frame});
-  if(vmdData.morphs) vmdData.morphs.forEach(kf=>{if(kf.frame>vmdData.totalFrames) vmdData.totalFrames=kf.frame});
-  setProgress(85,'VMD 加载完成');
+  mixer=new THREE.AnimationMixer(vrm.scene);
+  setProgress(85,`VMD 转换完成（${vmdClip.duration.toFixed(1)}秒）`);
 }
 
 // ─── Audio ────────────────────────────────────────────
@@ -218,80 +216,17 @@ async function loadAudio() {
   setTimeout(()=>loadingEl.classList.add('hidden'),500);
 }
 
-// ─── Animation System (SystemAnimatorOnline) ──────────
-const _q0=new THREE.Quaternion(),_q1=new THREE.Quaternion(),_v3=new THREE.Vector3();
-let animBones=[],isPlaying,animTime=0;
+// ─── Playback (standard VRMA retargeting) ─────────────
+let isPlaying=false;
 const clock=new THREE.Clock();
 
-function getBezierCP(c,i){const b=i*4;return{x1:c[b]/127,y1:c[b+1]/127,x2:c[b+2]/127,y2:c[b+3]/127}}
-
-function interpVMD(cv,t){
-  if(t<=0)return 0; if(t>=1)return 1;
-  const cp=getBezierCP(cv,0); let g=t;
-  for(let i=0;i<12;i++){
-    const o=1-g;
-    const bx=3*o*o*g*cp.x1+3*o*g*g*cp.x2+g*g*g;
-    const dbx=3*o*o*cp.x1+6*o*g*(cp.x2-cp.x1)+3*g*g*(1-cp.x2);
-    if(Math.abs(bx-t)<1e-5||Math.abs(dbx)<1e-10)break;
-    g=Math.max(0,Math.min(1,g-(bx-t)/dbx));
-  }
-  const o=1-g;
-  return Math.max(0,Math.min(1,3*o*o*g*cp.y1+3*o*g*g*cp.y2+g*g*g));
-}
-
-function setupAnimation(){
-  if(!vmdData||!vrm)return; animBones=[];
-  for(const md in boneMapMMDToVRM){
-    const t=vmdData._boneTracks[md]; if(!t||!t.length) continue;
-    let bn; try{bn=vrm.humanoid?.getNormalizedBoneNode?.(boneMapMMDToVRM[md])}catch(e){}
-    if(!bn) continue;
-    // VMD 的变换是相对于模型原始姿态的增量，不能直接覆盖 VRM 骨骼的 bind pose。
-    animBones.push({
-      track:t,
-      isRoot:md==='グルーブ',
-      boneNode:bn,
-      basePosition:bn.position.clone(),
-      baseQuaternion:bn.quaternion.clone(),
-    });
-  }
-}
-
-function applyVMDAtFrame(frame){
-  if(!vrm||!vmdData||!animBones.length)return;
-  animBones.forEach(({track,isRoot,boneNode,basePosition,baseQuaternion})=>{
-    const len=track.length;
-    let kf0, kf1, interp;
-    if(frame<=track[0].frame){
-      kf0=kf1=track[0]; interp=0;
-    }else if(frame>=track[len-1].frame){
-      kf0=kf1=track[len-1]; interp=0;
-    }else{
-      let lo=0,hi=len-1;
-      while(hi-lo>1){const m=(lo+hi)>>1;if(track[m].frame<=frame)lo=m;else hi=m}
-      kf0=track[lo]; kf1=track[hi];
-      interp=interpVMD(kf0.interpolation,(frame-kf0.frame)/(kf1.frame-kf0.frame));
-    }
-
-    // VMD 四元数是 MMD bind pose 的局部旋转增量，乘在 VRM 的原始姿态上。
-    _q0.fromArray(kf0.rotation); _q1.fromArray(kf1.rotation);
-    if(_q0.dot(_q1)<0) _q1.set(-_q1.x,-_q1.y,-_q1.z,-_q1.w);
-    _q0.slerp(_q1,interp);
-    boneNode.quaternion.copy(baseQuaternion).multiply(_q0);
-
-    if(isRoot){
-      // VMD 的 グルーブ 是根位移。保留 VRM hips 原始高度，再叠加位移。
-      _v3.set(-kf0.position[0], kf0.position[1], kf0.position[2])
-        .lerp(new THREE.Vector3(-kf1.position[0], kf1.position[1], kf1.position[2]),interp)
-        .multiplyScalar(0.085)
-        .add(basePosition);
-      boneNode.position.copy(_v3);
-    }
-  });
-}
-
 function startPlayback(){
-  if(!vmdData||!vrm)return;
-  clock.start(); animTime=0; isPlaying=true;
+  if(!vmdClip||!mixer)return;
+  if(action) action.stop();
+  action=mixer.clipAction(vmdClip);
+  action.setLoop(THREE.LoopRepeat);
+  action.reset().play();
+  isPlaying=true;
   if(isAudioReady&&audioBuffer){
     sourceNode=audioCtx.createBufferSource(); sourceNode.buffer=audioBuffer;
     sourceNode.connect(gainNode); sourceNode.start(0);
@@ -302,23 +237,12 @@ function startPlayback(){
 function animate(){
   requestAnimationFrame(animate);
   const dt=clock.getDelta();
-  if(isPlaying&&vmdData){
-    animTime+=dt;
-    const mt=vmdData.totalFrames/VMD_FPS;
-    if(animTime>=mt){
-      animTime=0;
-      if(sourceNode){try{sourceNode.stop()}catch(e){}sourceNode=null}
-      if(isAudioReady&&audioBuffer){
-        sourceNode=audioCtx.createBufferSource(); sourceNode.buffer=audioBuffer;
-        sourceNode.connect(gainNode); sourceNode.start(0);
-      }
-    }
-  }
-  // CRITICAL: vrm.update() resets humanoid bones — must call BEFORE applyVMDAtFrame
+  if(mixer) mixer.update(dt);
   if(vrm) vrm.update(dt);
-  if(isPlaying&&vmdData){
-    applyVMDAtFrame(animTime*VMD_FPS);
-    const c=Math.floor(animTime),m=Math.floor(vmdData.totalFrames/VMD_FPS);
+  if(isPlaying&&vmdClip){
+    const elapsed=action?.time||0;
+    const total=vmdClip.duration;
+    const c=Math.floor(elapsed),m=Math.floor(total);
     timeDisplay.textContent=`${Math.floor(c/60)}:${String(c%60).padStart(2,'0')} / ${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`;
   }
   controls.update();
@@ -337,7 +261,7 @@ addEventListener('resize',()=>{
 
 (async()=>{
   try{
-    await loadVRM(); await loadVMD(); setupAnimation(); await loadAudio(); animate();
+    await loadVRM(); await loadVMD(); await loadAudio(); animate();
     setTimeout(startPlayback,1500);
   }catch(err){
     statusText.textContent='❌ '+err.message; console.error(err);
