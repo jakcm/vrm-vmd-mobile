@@ -107,15 +107,12 @@ function mmdQuaternion(keys, frame) {
   return key ? _q.fromArray(key.rot) : _q.identity();
 }
 
-// MMD coordinates and VRM 0.x use opposite X/Z handedness. SystemAnimatorOnline
-// applies this exact correction in process_rotation() before creating VRM tracks.
-export function convertMmdRotationToVrm(rotation, metaVersion = '0') {
-  const result = rotation.clone();
-  if (metaVersion === '0') {
-    result.x *= -1;
-    result.z *= -1;
-  }
-  return result;
+// The BVH here is a canonical humanoid intermediate consumed by bvh2vrma.
+// Keep raw VMD local rotations in that canonical space. SystemAnimatorOnline's
+// VRM0 X/Z handedness conversion belongs only to its direct MMD→VRM runtime
+// assignment path; applying it before BVH→VRMA flips the motion a second time.
+export function convertMmdRotationToVrm(rotation, _metaVersion = '0') {
+  return rotation.clone();
 }
 
 export function vmdToBVH(vmdData, vrm, options = {}) {
