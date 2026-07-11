@@ -50,11 +50,13 @@ export function convertBVHToVRMAnimation(bvh, options) {
             if (track.name.endsWith(".quaternion")) {
                 filteredTracks.push(track);
             }
-            if (track.name === `${hipsBoneName}.position`) {
-                const newTrack = track.clone();
-                newTrack.values = track.values.map((v) => v * (scale));
-                hipsPositionTrack = newTrack;
-                filteredTracks.push(newTrack);
+            if ((options === null || options === void 0 ? void 0 : options.includeHipsTranslation) !== false) {
+                if (track.name === `${hipsBoneName}.position`) {
+                    const newTrack = track.clone();
+                    newTrack.values = track.values.map((v) => v * (scale));
+                    hipsPositionTrack = newTrack;
+                    filteredTracks.push(newTrack);
+                }
             }
             if (track.name === `${spineBoneName}.position`) {
                 const newTrack = track.clone();

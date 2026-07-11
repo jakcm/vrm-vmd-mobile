@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const index = await readFile(new URL('../index.html', import.meta.url), 'utf8');
-const converter = await readFile(new URL('../libs/VMD_to_BVH.js', import.meta.url), 'utf8');
+const converter = await readFile(new URL('../libs/convertBVHToVRMAnimation.js', import.meta.url), 'utf8');
 
-// A paused action must not receive AnimationMixer time updates.
-assert.match(index, /if\(isPlaying&&mixer\) mixer\.update\(dt\);/, 'mixer must update only while playback is active');
-// This fixed-camera page must not animate hips translation; VMD root motion is stage locomotion.
-assert.match(converter, /closedRoot\.x = 0;\s*closedRoot\.y = 0;\s*closedRoot\.z = 0;/s, 'all root translation axes must be locked');
+// Pause must keep the existing action/time, then unpause it — never reset/recreate it.
+assert.match(index, /action\.paused\s*=\s*true/, 'pause must pause the existing animation action');
+assert.match(index, /action\.paused\s*=\s*false/, 'resume must unpause the existing animation action');
+assert.doesNotMatch(index, /if\(action\) action\.stop\(\);\s*action=mixer\.clipAction\(vmdClip\);/s, 'resume must not stop and recreate the action');
+// Fixed-camera mode must omit hips translation from VRMA entirely: a constant hips
+// track is still normalized by three-vrm and can produce an apparent vertical bob.
+assert.match(index, /convertBVHToVRMAnimation\(bvh,\{scale:0\.01,includeHipsTranslation:false\}\)/, 'fixed-camera conversion must omit hips translation');
+assert.match(converter, /includeHipsTranslation/, 'converter must support omitting hips translation');
 
-console.log('playback/root-motion invariants passed');
+console.log('pause/resume and root-translation invariants passed');

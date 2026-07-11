@@ -43,7 +43,7 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-<div id="ver">v20260711.015145</div>
+<div id="ver">v20260711.020103</div>
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
@@ -184,7 +184,10 @@ async function loadVMD() {
   const bvhText=vmdToBVH(vmd,vrm,{fps:30,scale:0.1});
   const bvh=new BVHLoader().parse(bvhText);
   setProgress(73,'BVH → VRMA 动画...');
-  const vrmaBuffer=await convertBVHToVRMAnimation(bvh,{scale:0.01});
+  // Fixed-camera dance mode: omit the hips translation track from the exported
+  // VRMA completely. A constant/zero track is still normalized by three-vrm;
+  // no track is the only unambiguous way to keep the avatar planted.
+  const vrmaBuffer=await convertBVHToVRMAnimation(bvh,{scale:0.01,includeHipsTranslation:false});
 
   const animationLoader=new GLTFLoader();
   animationLoader.register(p=>new VRMAnimationLoaderPlugin(p));
@@ -222,16 +225,33 @@ const clock=new THREE.Clock();
 
 function startPlayback(){
   if(!vmdClip||!mixer)return;
-  if(action) action.stop();
-  action=mixer.clipAction(vmdClip);
-  action.setLoop(THREE.LoopRepeat);
-  action.reset().play();
+  // First click creates the action. Later clicks resume the same action and
+  // preserve action.time — this control is pause/resume, never stop/restart.
+  if(!action){
+    action=mixer.clipAction(vmdClip);
+    action.setLoop(THREE.LoopRepeat);
+    action.reset().play();
+  } else {
+    action.paused=false;
+    action.play();
+  }
   isPlaying=true;
   if(isAudioReady&&audioBuffer){
     sourceNode=audioCtx.createBufferSource(); sourceNode.buffer=audioBuffer;
-    sourceNode.connect(gainNode); sourceNode.start(0);
+    sourceNode.connect(gainNode);
+    sourceNode.start(0,(action.time||0)%audioBuffer.duration);
   }
   btnPlay.textContent='⏸';
+}
+
+function pausePlayback(){
+  if(!action)return;
+  // Freeze exactly at the current mixer time; source nodes cannot be resumed,
+  // so stop audio only and recreate it from action.time when resuming.
+  action.paused=true;
+  isPlaying=false;
+  if(sourceNode){try{sourceNode.stop()}catch(e){}sourceNode=null}
+  btnPlay.textContent='▶';
 }
 
 function animate(){
@@ -254,7 +274,7 @@ function animate(){
 
 btnPlay.addEventListener('click',async()=>{
   if(audioCtx&&audioCtx.state==='suspended') await audioCtx.resume();
-  if(isPlaying){isPlaying=false;if(sourceNode){try{sourceNode.stop()}catch(e){}sourceNode=null}btnPlay.textContent='▶'}
+  if(isPlaying) pausePlayback();
   else startPlayback();
 });
 
