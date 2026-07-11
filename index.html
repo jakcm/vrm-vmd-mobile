@@ -406,6 +406,47 @@ async function loadVRM() {
     }
   });
   dbg(`Materials: ${JSON.stringify(matTypes)}`);
+
+  // Fix: convert ShaderMaterial (MToon) to StandardMaterial for visibility
+  // VRM 0.x MToon shaders may not render correctly with current three-vrm version
+  let converted = 0;
+  vrmScene.traverse(c => {
+    if (c.isMesh && c.material) {
+      const mats = Array.isArray(c.material) ? c.material : [c.material];
+      mats.forEach((m, i) => {
+        if (m.type === 'ShaderMaterial') {
+          let map = null;
+          let color = new THREE.Color(0xFFCCDD);
+          try {
+            if (m.uniforms && m.uniforms._MainTex && m.uniforms._MainTex.value) {
+              map = m.uniforms._MainTex.value;
+            }
+            if (m.uniforms && m.uniforms._Color && m.uniforms._Color.value) {
+              color.copy(m.uniforms._Color.value);
+            }
+          } catch(e) {}
+          const newMat = new THREE.MeshStandardMaterial({
+            color: color,
+            map: map,
+            roughness: 0.5,
+            metalness: 0.0,
+            side: THREE.DoubleSide,
+            transparent: m.transparent,
+            opacity: Math.max(m.opacity || 1, 0.01),
+            depthWrite: true,
+            depthTest: true,
+          });
+          if (Array.isArray(c.material)) {
+            c.material[i] = newMat;
+          } else {
+            c.material = newMat;
+          }
+          converted++;
+        }
+      });
+    }
+  });
+  dbg(`Converted ${converted} ShaderMaterials → MeshStandardMaterial`);
 }
 
 // ─── VMD Load & Parse ────────────────────────────────────
