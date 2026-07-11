@@ -10,7 +10,6 @@
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/",
-    "three/addons/loaders/MMDLoader.js": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/loaders/MMDLoader.js",
     "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js"
   }
 }
@@ -21,42 +20,19 @@
 body { margin:0; overflow:hidden; user-select:none; -webkit-user-select:none; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#1a1a2e; color:#fff; }
 canvas { touch-action:none; display:block; }
 
-#loading {
-  position:fixed; inset:0; display:flex; flex-direction:column;
-  align-items:center; justify-content:center; background:#1a1a2e; z-index:100;
-  transition:opacity .5s;
-}
+#loading { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#1a1a2e; z-index:100; transition:opacity .5s; }
 #loading.hidden { opacity:0; pointer-events:none; }
 #loading h1 { font-size:24px; margin-bottom:24px; background:linear-gradient(135deg,#e94560,#0f3460); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
 .loader-bar { width:280px; height:4px; background:#16213e; border-radius:2px; overflow:hidden; }
 .loader-bar .fill { height:100%; width:0%; background:linear-gradient(90deg,#e94560,#0f3460); border-radius:2px; transition:width .3s; }
 #loading p { margin-top:12px; font-size:13px; color:#888; }
 
-#controls {
-  position:fixed; bottom:30px; left:50%; transform:translateX(-50%);
-  display:flex; gap:12px; align-items:center; z-index:50;
-  background:rgba(0,0,0,.5); backdrop-filter:blur(10px);
-  padding:10px 20px; border-radius:30px;
-  border:1px solid rgba(255,255,255,.1);
-}
-#controls button {
-  width:44px; height:44px; border-radius:50%;
-  border:1px solid rgba(255,255,255,.2);
-  background:rgba(255,255,255,.08); color:#fff;
-  font-size:20px; cursor:pointer; transition:all .2s;
-  display:flex; align-items:center; justify-content:center;
-}
+#controls { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); display:flex; gap:12px; align-items:center; z-index:50; background:rgba(0,0,0,.5); backdrop-filter:blur(10px); padding:10px 20px; border-radius:30px; border:1px solid rgba(255,255,255,.1); }
+#controls button { width:44px; height:44px; border-radius:50%; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:#fff; font-size:20px; cursor:pointer; transition:all .2s; display:flex; align-items:center; justify-content:center; }
 #controls button:hover { background:rgba(255,255,255,.2); }
 #controls button:active { transform:scale(.9); }
 #controls .time { font-size:12px; color:#aaa; min-width:80px; text-align:center; font-variant-numeric:tabular-nums; }
-
-#info {
-  position:fixed; top:12px; left:50%; transform:translateX(-50%);
-  z-index:50; background:rgba(0,0,0,.4); backdrop-filter:blur(8px);
-  padding:6px 16px; border-radius:20px; font-size:12px; color:#ccc;
-  white-space:nowrap; border:1px solid rgba(255,255,255,.06);
-  pointer-events:none;
-}
+#info { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:50; background:rgba(0,0,0,.4); backdrop-filter:blur(8px); padding:6px 16px; border-radius:20px; font-size:12px; color:#ccc; white-space:nowrap; border:1px solid rgba(255,255,255,.06); pointer-events:none; }
 </style>
 </head>
 <body>
@@ -76,12 +52,98 @@ canvas { touch-action:none; display:block; }
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
 
+// ═══════════════════════════════════════════════════════════
+// VMD Binary Parser (pure JS, no MMDLoader dependency)
+// ═══════════════════════════════════════════════════════════
+
+function parseVMD(arrayBuffer) {
+  const dv = new DataView(arrayBuffer);
+  let offset = 0;
+
+  // Header: 30 bytes + padding
+  const headerStr = '';
+  offset += 30;
+
+  // Bone motions count
+  const boneCount = dv.getUint32(offset, true); offset += 4;
+
+  const bones = [];
+  for (let i = 0; i < boneCount; i++) {
+    // Bone name: 15 bytes Shift-JIS (treat as raw bytes, convert to string)
+    const nameBytes = [];
+    for (let j = 0; j < 15; j++) {
+      const b = dv.getUint8(offset + j);
+      if (b === 0) break;
+      nameBytes.push(b);
+    }
+    const name = new TextDecoder('shift-jis').decode(new Uint8Array(nameBytes));
+    offset += 15;
+
+    const frame = dv.getUint32(offset, true); offset += 4;
+
+    // Position: vec3 float32
+    const px = dv.getFloat32(offset, true); offset += 4;
+    const py = dv.getFloat32(offset, true); offset += 4;
+    const pz = dv.getFloat32(offset, true); offset += 4;
+
+    // Rotation: quat float32 (x, y, z, w)
+    const rx = dv.getFloat32(offset, true); offset += 4;
+    const ry = dv.getFloat32(offset, true); offset += 4;
+    const rz = dv.getFloat32(offset, true); offset += 4;
+    const rw = dv.getFloat32(offset, true); offset += 4;
+
+    // Interpolation: 64 bytes (4 curves x 4 control points x 4 bytes)
+    // We store the raw bytes for Bezier curve interpolation
+    const interpolation = [];
+    for (let j = 0; j < 64; j++) {
+      interpolation.push(dv.getUint8(offset + j));
+    }
+    offset += 64;
+
+    bones.push({
+      name,
+      frame,
+      position: [px, py, pz],
+      rotation: [rx, ry, rz, rw],
+      interpolation,
+    });
+  }
+
+  // Morph count
+  const morphCount = dv.getUint32(offset, true); offset += 4;
+
+  const morphs = [];
+  for (let i = 0; i < morphCount; i++) {
+    const nameBytes = [];
+    for (let j = 0; j < 15; j++) {
+      const b = dv.getUint8(offset + j);
+      if (b === 0) break;
+      nameBytes.push(b);
+    }
+    const name = new TextDecoder('shift-jis').decode(new Uint8Array(nameBytes));
+    offset += 15;
+
+    const frame = dv.getUint32(offset, true); offset += 4;
+    const weight = dv.getFloat32(offset, true); offset += 4;
+
+    morphs.push({ name, frame, weight });
+  }
+
+  return { bones, morphs };
+}
+
+// Shift-JIS decoder polyfill for browsers that don't support it
+if (typeof TextDecoder === 'function') {
+  try { new TextDecoder('shift-jis'); } catch(e) {
+    // fallback: replace common VMD char codes
+    const origDecode = TextDecoder.prototype.decode;
+    // keep as-is, modern browsers support shift-jis
+  }
+}
+
 // ─── Patch MToon shader (getShadow compat with r176) ──
-// The MToon fragment shader calls getShadow with 5 params
-// but r176 requires 6. Replace call with 1.0 to skip shadow.
 function patchShaderMaterial(mat) {
   if (!mat || mat._shadowPatched) return;
   const origCb = mat.onBeforeCompile;
@@ -146,7 +208,6 @@ document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1a2e);
 
-// Lights - matching vrm-viewer-mobile
 scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 const dirLight = new THREE.DirectionalLight(0xffffff, 3.0);
 dirLight.position.set(1, 1, 1).normalize();
@@ -190,10 +251,9 @@ async function loadVRM() {
   vrm = gltf.userData.vrm;
   vrmScene = gltf.scene;
 
-  // VRM 3.x cleanup
   THREEVRM.VRMUtils.removeUnnecessaryVertices(vrmScene);
 
-  // Patch all ShaderMaterials BEFORE adding to scene
+  // Patch ShaderMaterials
   vrmScene.traverse(child => {
     if (!child.isMesh) return;
     child.frustumCulled = false;
@@ -214,45 +274,38 @@ async function loadVRM() {
   setProgress(55, 'VRM 加载完成');
 }
 
-// ─── VMD Load (MMDLoader based) ──────────────────────
+// ─── VMD Load (pure JS parser) ────────────────────────
 let vmdData = null;
 
 async function loadVMD() {
   setProgress(55, '加载 VMD 动作...');
-  const loader = new MMDLoader();
-  vmdData = await new Promise((resolve, reject) => {
-    loader.loadVMD(cfg.vmdPaths[0], resolve, xhr => {
-      setProgress(55 + (xhr.loaded / xhr.total) * 25, `加载 VMD... ${Math.round(xhr.loaded/1024)}KB`);
-    }, reject);
-  });
-  if (!vmdData.bones && vmdData.motions) vmdData.bones = vmdData.motions;
-  if (vmdData.bones) {
-    vmdData.bones.forEach(kf => {
-      if (kf.boneName !== undefined && kf.name === undefined) kf.name = kf.boneName;
-      if (kf.frameNum !== undefined && kf.frame === undefined) kf.frame = kf.frameNum;
-    });
-  }
+  const resp = await fetch(cfg.vmdPaths[0]);
+  const ab = await resp.arrayBuffer();
+  const parsed = parseVMD(ab);
+
+  // Build bone tracks
   const boneTracks = {};
-  if (vmdData.bones) {
-    vmdData.bones.forEach(kf => {
-      if (!boneTracks[kf.name]) boneTracks[kf.name] = [];
-      boneTracks[kf.name].push(kf);
-    });
-    Object.values(boneTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
-  }
-  vmdData._boneTracks = boneTracks;
+  parsed.bones.forEach(kf => {
+    if (!boneTracks[kf.name]) boneTracks[kf.name] = [];
+    boneTracks[kf.name].push(kf);
+  });
+  Object.values(boneTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
+  vmdData = { _boneTracks: boneTracks };
+
+  // Build morph tracks
   const morphTracks = {};
-  if (vmdData.morphs) {
-    vmdData.morphs.forEach(kf => {
-      if (!morphTracks[kf.name]) morphTracks[kf.name] = [];
-      morphTracks[kf.name].push(kf);
-    });
-    Object.values(morphTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
-  }
+  parsed.morphs.forEach(kf => {
+    if (!morphTracks[kf.name]) morphTracks[kf.name] = [];
+    morphTracks[kf.name].push(kf);
+  });
+  Object.values(morphTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
   vmdData._morphTracks = morphTracks;
+
+  // Total frames
   vmdData.totalFrames = 0;
-  if (vmdData.bones) vmdData.bones.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
-  if (vmdData.morphs) vmdData.morphs.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
+  parsed.bones.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
+  parsed.morphs.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
+
   setProgress(85, 'VMD 加载完成');
 }
 
@@ -281,28 +334,29 @@ let isPlaying = false;
 let animTime = 0;
 const clock = new THREE.Clock();
 
-function interpolateVMD(curve, time, kf0, kf1) {
-  if (!kf1 && !kf0) return 0;
-  if (!kf1) return 1;
-  if (!kf0) return 0;
-  const frameDiff = kf1.frame - kf0.frame;
-  if (frameDiff <= 0) return 1;
-  const t = (time - kf0.frame) / frameDiff;
+// Extract Bezier control points from VMD interpolation bytes
+function getBezierCP(curve, idx) {
+  const base = idx * 4;
+  return {
+    x1: curve[base] / 127, y1: curve[base + 1] / 127,
+    x2: curve[base + 2] / 127, y2: curve[base + 3] / 127,
+  };
+}
+
+function interpolateVMD(curve, t) {
   if (t <= 0) return 0;
   if (t >= 1) return 1;
-  const base = 0;
-  const cpx1 = curve[base] / 127, cpy1 = curve[base + 1] / 127;
-  const cpx2 = curve[base + 2] / 127, cpy2 = curve[base + 3] / 127;
+  const cp = getBezierCP(curve, 0);
   let guess = t;
   for (let i = 0; i < 12; i++) {
     const omg = 1 - guess;
-    const bx = 3 * omg * omg * guess * cpx1 + 3 * omg * guess * guess * cpx2 + guess * guess * guess;
-    const dbx = 3 * omg * omg * cpx1 + 6 * omg * guess * (cpx2 - cpx1) + 3 * guess * guess * (1 - cpx2);
+    const bx = 3 * omg * omg * guess * cp.x1 + 3 * omg * guess * guess * cp.x2 + guess * guess * guess;
+    const dbx = 3 * omg * omg * cp.x1 + 6 * omg * guess * (cp.x2 - cp.x1) + 3 * guess * guess * (1 - cp.x2);
     if (Math.abs(bx - t) < 1e-5 || Math.abs(dbx) < 1e-10) break;
     guess = Math.max(0, Math.min(1, guess - (bx - t) / dbx));
   }
   const omg = 1 - guess;
-  return Math.max(0, Math.min(1, 3 * omg * omg * guess * cpy1 + 3 * omg * guess * guess * cpy2 + guess * guess * guess));
+  return Math.max(0, Math.min(1, 3 * omg * omg * guess * cp.y1 + 3 * omg * guess * guess * cp.y2 + guess * guess * guess));
 }
 
 function setupAnimation() {
@@ -325,34 +379,33 @@ function applyVMDAtFrame(frame) {
     const len = track.length;
     if (frame <= track[0].frame) {
       const kf = track[0];
-      boneNode.quaternion.fromArray(kf.rotation);
+      boneNode.quaternion.set(kf.rotation[0], kf.rotation[1], kf.rotation[2], kf.rotation[3]);
       if (isRoot) boneNode.position.set(-kf.position[0], kf.position[1], kf.position[2]);
       return;
     }
     if (frame >= track[len - 1].frame) {
       const kf = track[len - 1];
-      boneNode.quaternion.fromArray(kf.rotation);
+      boneNode.quaternion.set(kf.rotation[0], kf.rotation[1], kf.rotation[2], kf.rotation[3]);
       if (isRoot) boneNode.position.set(-kf.position[0], kf.position[1], kf.position[2]);
       return;
     }
     let lo = 0, hi = len - 1;
     while (hi - lo > 1) { const m = (lo + hi) >> 1; if (track[m].frame <= frame) lo = m; else hi = m; }
     const kf0 = track[lo], kf1 = track[hi];
-    const interp = interpolateVMD(kf0.interpolation, frame, kf0, kf1);
-    _q0.fromArray(kf0.rotation); _q1.fromArray(kf1.rotation);
+    const frameDiff = kf1.frame - kf0.frame;
+    const t = (frame - kf0.frame) / frameDiff;
+    const interp = interpolateVMD(kf0.interpolation, t);
+
+    _q0.set(kf0.rotation[0], kf0.rotation[1], kf0.rotation[2], kf0.rotation[3]);
+    _q1.set(kf1.rotation[0], kf1.rotation[1], kf1.rotation[2], kf1.rotation[3]);
     const cos = _q0.x * _q1.x + _q0.y * _q1.y + _q0.z * _q1.z + _q0.w * _q1.w;
     if (cos < 0) { _q1.x = -_q1.x; _q1.y = -_q1.y; _q1.z = -_q1.z; _q1.w = -_q1.w; }
-    const theta = Math.acos(Math.abs(cos));
-    const sinT = Math.sin(theta);
-    if (sinT < 0.001) { boneNode.quaternion.copy(_q0); }
-    else {
-      const a = Math.sin((1 - interp) * theta) / sinT;
-      const b = Math.sin(interp * theta) / sinT;
-      boneNode.quaternion.set(_q0.x * a + _q1.x * b, _q0.y * a + _q1.y * b, _q0.z * a + _q1.z * b, _q0.w * a + _q1.w * b);
-    }
+    _q0.slerp(_q1, interp);
+    boneNode.quaternion.copy(_q0);
+
     if (isRoot) {
-      _v3.lerpVectors(new THREE.Vector3(-kf0.position[0], kf0.position[1], kf0.position[2]),
-        new THREE.Vector3(-kf1.position[0], kf1.position[1], kf1.position[2]), interp);
+      _v3.set(-kf0.position[0], kf0.position[1], kf0.position[2])
+        .lerp(new THREE.Vector3(-kf1.position[0], kf1.position[1], kf1.position[2]), interp);
       boneNode.position.copy(_v3);
     }
   });
