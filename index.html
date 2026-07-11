@@ -42,7 +42,7 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-<div id="ver">v20260711003932</div>
+<div id="ver">v20260711004909</div>
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
@@ -89,7 +89,8 @@ function setProgress(pct, msg) {
 
 // ─── Bone Mapping (SystemAnimatorOnline) ──────────────
 const boneMapMMDToVRM = {
-  'センター':'hips','上半身':'spine','上半身2':'chest','上半身3':'upperChest',
+  // 此 VMD 的实际根运动在「グルーブ」轨道；センター在该动作中基本静止。
+  'グルーブ':'hips','上半身':'spine','上半身2':'chest','上半身3':'upperChest',
   '首':'neck','頭':'head',
   '右肩':'rightShoulder','右腕':'rightUpperArm','右ひじ':'rightLowerArm','右手首':'rightHand',
   '右親指０':'rightThumbMetacarpal','右親指１':'rightThumbProximal','右親指２':'rightThumbDistal',
@@ -244,41 +245,45 @@ function setupAnimation(){
     const t=vmdData._boneTracks[md]; if(!t||!t.length) continue;
     let bn; try{bn=vrm.humanoid?.getNormalizedBoneNode?.(boneMapMMDToVRM[md])}catch(e){}
     if(!bn) continue;
-    animBones.push({track:t,isRoot:md==='センター',boneNode:bn});
+    // VMD 的变换是相对于模型原始姿态的增量，不能直接覆盖 VRM 骨骼的 bind pose。
+    animBones.push({
+      track:t,
+      isRoot:md==='グルーブ',
+      boneNode:bn,
+      basePosition:bn.position.clone(),
+      baseQuaternion:bn.quaternion.clone(),
+    });
   }
 }
 
 function applyVMDAtFrame(frame){
   if(!vrm||!vmdData||!animBones.length)return;
-  animBones.forEach(({track,isRoot,boneNode})=>{
+  animBones.forEach(({track,isRoot,boneNode,basePosition,baseQuaternion})=>{
     const len=track.length;
+    let kf0, kf1, interp;
     if(frame<=track[0].frame){
-      const kf=track[0];
-      boneNode.quaternion.fromArray(kf.rotation);
-      if(isRoot) boneNode.position.set(-kf.position[0]*0.085, kf.position[1]*0.085, kf.position[2]*0.085);
-      return;
+      kf0=kf1=track[0]; interp=0;
+    }else if(frame>=track[len-1].frame){
+      kf0=kf1=track[len-1]; interp=0;
+    }else{
+      let lo=0,hi=len-1;
+      while(hi-lo>1){const m=(lo+hi)>>1;if(track[m].frame<=frame)lo=m;else hi=m}
+      kf0=track[lo]; kf1=track[hi];
+      interp=interpVMD(kf0.interpolation,(frame-kf0.frame)/(kf1.frame-kf0.frame));
     }
-    if(frame>=track[len-1].frame){
-      const kf=track[len-1];
-      boneNode.quaternion.fromArray(kf.rotation);
-      if(isRoot) boneNode.position.set(-kf.position[0]*0.085, kf.position[1]*0.085, kf.position[2]*0.085);
-      return;
-    }
-    let lo=0,hi=len-1;
-    while(hi-lo>1){const m=(lo+hi)>>1;if(track[m].frame<=frame)lo=m;else hi=m}
-    const kf0=track[lo],kf1=track[hi];
-    const t=(frame-kf0.frame)/(kf1.frame-kf0.frame);
-    const interp=interpVMD(kf0.interpolation,t);
 
-    _q0.fromArray(kf0.rotation);_q1.fromArray(kf1.rotation);
-    const cos=_q0.x*_q1.x+_q0.y*_q1.y+_q0.z*_q1.z+_q0.w*_q1.w;
-    if(cos<0){_q1.x=-_q1.x;_q1.y=-_q1.y;_q1.z=-_q1.z;_q1.w=-_q1.w}
+    // VMD 四元数是 MMD bind pose 的局部旋转增量，乘在 VRM 的原始姿态上。
+    _q0.fromArray(kf0.rotation); _q1.fromArray(kf1.rotation);
+    if(_q0.dot(_q1)<0) _q1.set(-_q1.x,-_q1.y,-_q1.z,-_q1.w);
     _q0.slerp(_q1,interp);
-    boneNode.quaternion.copy(_q0);
+    boneNode.quaternion.copy(baseQuaternion).multiply(_q0);
 
     if(isRoot){
-      _v3.set(-kf0.position[0]*0.085, kf0.position[1]*0.085, kf0.position[2]*0.085)
-        .lerp(new THREE.Vector3(-kf1.position[0]*0.085, kf1.position[1]*0.085, kf1.position[2]*0.085), interp);
+      // VMD 的 グルーブ 是根位移。保留 VRM hips 原始高度，再叠加位移。
+      _v3.set(-kf0.position[0], kf0.position[1], kf0.position[2])
+        .lerp(new THREE.Vector3(-kf1.position[0], kf1.position[1], kf1.position[2]),interp)
+        .multiplyScalar(0.085)
+        .add(basePosition);
       boneNode.position.copy(_v3);
     }
   });
