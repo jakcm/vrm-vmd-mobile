@@ -24,6 +24,7 @@ const _qb = new THREE.Quaternion();
 const _q = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 const _armAxisFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+const _fingerAxisFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 
 function getBoneNodes(vrm) {
   const nodes = new Map();
@@ -186,6 +187,10 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
       // arm axes. Conjugating by Xπ preserves the motion magnitude while
       // correcting its up/down and front/back direction for VRMA retargeting.
       if (/^(left|right)(UpperArm|LowerArm|Hand)$/.test(name)) q.premultiply(_armAxisFlip).multiply(_armAxisFlip);
+      // Finger curl is authored around the MMD hand-local Z axis, while this
+      // canonical VRMA hand skeleton uses the opposite palm normal. Conjugate
+      // by Yπ so a curl closes into the palm rather than through the hand back.
+      if (/^(left|right)(Thumb|Index|Middle|Ring|Little)/.test(name)) q.premultiply(_fingerAxisFlip).multiply(_fingerAxisFlip);
       values.push(...toYxz(q.toArray()).map((v) => v.toFixed(6)));
     }
     lines.push(values.join(' '));

@@ -43,7 +43,7 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-<div id="ver">v20260711.030000</div>
+<div id="ver">v20260711.031500</div>
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
@@ -55,7 +55,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation';
 import { Parser } from './libs/mmdparser.module.js';
-import { vmdToBVH } from './libs/VMD_to_BVH.js?rev=20260711.030000';
+import { vmdToBVH } from './libs/VMD_to_BVH.js?rev=20260711.031500';
 import { BVHLoader } from './libs/BVHLoader.js';
 import { convertBVHToVRMAnimation } from './libs/convertBVHToVRMAnimation.js';
 
@@ -229,10 +229,14 @@ async function loadVMD() {
         left: {
           hip: point('leftUpperLeg'), knee: point('leftLowerLeg'), ankle: point('leftFoot'),
           shoulder: point('leftShoulder'), elbow: point('leftLowerArm'), wrist: point('leftHand'),
+          index: { proximal: point('leftIndexProximal'), intermediate: point('leftIndexIntermediate'), distal: point('leftIndexDistal') },
+          middle: { proximal: point('leftMiddleProximal'), intermediate: point('leftMiddleIntermediate'), distal: point('leftMiddleDistal') },
         },
         right: {
           hip: point('rightUpperLeg'), knee: point('rightLowerLeg'), ankle: point('rightFoot'),
           shoulder: point('rightShoulder'), elbow: point('rightLowerArm'), wrist: point('rightHand'),
+          index: { proximal: point('rightIndexProximal'), intermediate: point('rightIndexIntermediate'), distal: point('rightIndexDistal') },
+          middle: { proximal: point('rightMiddleProximal'), intermediate: point('rightMiddleIntermediate'), distal: point('rightMiddleDistal') },
         },
       };
     },
