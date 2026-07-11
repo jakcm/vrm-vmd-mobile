@@ -472,6 +472,27 @@ async function loadVRM() {
     }
   });
   dbg(`Converted ${converted} ShaderMaterials → MeshStandardMaterial`);
+
+  // DEBUG: Add a test box to verify rendering works
+  const testBox = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.3, 0.3),
+    new THREE.MeshStandardMaterial({ color: 0xFF0000 })
+  );
+  testBox.position.set(0, 0.5, 1.5);
+  scene.add(testBox);
+  dbg('Added red test box at (0, 0.5, 1.5)');
+  
+  // Set VRM to wireframe as fallback visibility check
+  vrmScene.traverse(c => {
+    if (c.isMesh && c.material) {
+      const mats = Array.isArray(c.material) ? c.material : [c.material];
+      mats.forEach(m => {
+        if (m.type === 'MeshStandardMaterial') {
+          m.wireframe = false;
+        }
+      });
+    }
+  });
 }
 
 // ─── VMD Load & Parse ────────────────────────────────────
