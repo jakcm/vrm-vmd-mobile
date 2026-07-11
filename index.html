@@ -356,7 +356,15 @@ async function loadVRM() {
   // Update VRM
   vrm.update(0);
 
-  setProgress(55, 'VRM 模型加载完成');
+  // Debug: check scene
+  let meshCount = 0;
+  vrmScene.traverse(c => { if (c.isMesh) meshCount++; });
+  console.log(`[DEBUG] VRM loaded: ${meshCount} meshes, children: ${vrmScene.children.length}`);
+  console.log(`[DEBUG] VRM scene scale:`, vrmScene.scale);
+  console.log(`[DEBUG] VRM meta:`, vrm.meta);
+  console.log(`[DEBUG] VRM humanoid bones:`, Object.keys(vrm.humanoid?.humanBones || {}).join(', '));
+
+  setProgress(55, `VRM 模型加载完成 (${meshCount} 网格)`);
 }
 
 // ─── VMD Load & Parse ────────────────────────────────────
@@ -542,6 +550,8 @@ function setupAnimationTracks() {
   const isVRM1 = vrm.meta && parseInt(vrm.meta.metaVersion) > 0;
   const morphMap = isVRM1 ? morphMapMMDToVRM1 : morphMapMMDToVRM0;
 
+  console.log(`[DEBUG] VRM version: ${isVRM1 ? '1.x' : '0.x'}`);
+
   animBones = [];
   for (const mmdName in boneMapMMDToVRM) {
     const track = vmdData._boneTracks[mmdName];
@@ -562,6 +572,16 @@ function setupAnimationTracks() {
     });
   }
 
+  console.log(`[DEBUG] Mapped ${animBones.length} bones:`);
+  animBones.forEach(b => console.log(`  ${b.mmdName} → ${b.vrmName} (${b.track.length} keyframes)`));
+
+  // Log unmapped VMD bones
+  for (const mmdName in vmdData._boneTracks) {
+    if (!boneMapMMDToVRM[mmdName]) {
+      console.warn(`[DEBUG] Unmapped VMD bone: "${mmdName}"`);
+    }
+  }
+
   // Morph mapping
   animMorphs = [];
   for (const mmdName in morphMap) {
@@ -570,6 +590,7 @@ function setupAnimationTracks() {
     const vrmName = morphMap[mmdName];
     animMorphs.push({ mmdName, vrmName, track });
   }
+  console.log(`[DEBUG] Mapped ${animMorphs.length} morphs`);
 }
 let animMorphs = [];
 
@@ -581,7 +602,16 @@ const _euler = new THREE.Euler();
 const _v3 = new THREE.Vector3();
 
 function applyVMDAtFrame(frame) {
-  if (!vrm || !vmdData) return;
+  if (!vrm || !vmdData) {
+    //console.log('[DEBUG] applyVMDAtFrame skipped: no vrm or vmdData');
+    return;
+  }
+
+  // Debug first frame
+  const frameInt = Math.floor(frame);
+  if (frameInt % 300 === 0 || animBones.length === 0) {
+    console.log(`[DEBUG] applyVMDAtFrame frame=${frame.toFixed(1)}, animBones=${animBones.length}, animMorphs=${animMorphs.length}`);
+  }
 
   // Apply bone transforms
   animBones.forEach(({ mmdName, vrmName, track, isRoot, boneNode }) => {
