@@ -107,12 +107,17 @@ function mmdQuaternion(keys, frame) {
   return key ? _q.fromArray(key.rot) : _q.identity();
 }
 
-// The BVH here is a canonical humanoid intermediate consumed by bvh2vrma.
-// Keep raw VMD local rotations in that canonical space. SystemAnimatorOnline's
-// VRM0 X/Z handedness conversion belongs only to its direct MMD→VRM runtime
-// assignment path; applying it before BVH→VRMA flips the motion a second time.
-export function convertMmdRotationToVrm(rotation, _metaVersion = '0') {
-  return rotation.clone();
+// VRMA stores humanoid rotations in the MMD/canonical basis. At final playback,
+// createVRMAnimationClip() applies VRM0's X/Z handedness conversion. The source
+// VMD is already in the opposite basis, so pre-convert here: the two stage
+// transforms compose to the original forward-bending motion on the target VRM.
+export function convertMmdRotationToVrm(rotation, metaVersion = '0') {
+  const result = rotation.clone();
+  if (metaVersion === '0') {
+    result.x *= -1;
+    result.z *= -1;
+  }
+  return result;
 }
 
 export function vmdToBVH(vmdData, vrm, options = {}) {

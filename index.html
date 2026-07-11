@@ -43,7 +43,7 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-<div id="ver">v20260711.023000</div>
+<div id="ver">v20260711.024500</div>
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
@@ -55,7 +55,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation';
 import { Parser } from './libs/mmdparser.module.js';
-import { vmdToBVH } from './libs/VMD_to_BVH.js';
+import { vmdToBVH } from './libs/VMD_to_BVH.js?rev=20260711.024500';
 import { BVHLoader } from './libs/BVHLoader.js';
 import { convertBVHToVRMAnimation } from './libs/convertBVHToVRMAnimation.js';
 
@@ -202,6 +202,45 @@ async function loadVMD() {
   }
 
   mixer=new THREE.AnimationMixer(vrm.scene);
+  // Expose a deterministic, read-only pose probe for end-to-end regression tests.
+  // It samples the *actual target VRM after createVRMAnimationClip*, rather than
+  // merely checking the source VMD or an intermediate BVH quaternion.
+  window.__vrmDanceDebug = {
+    samplePoseAt: (seconds) => {
+      const probe = mixer.clipAction(vmdClip);
+      const wasRunning = probe.isRunning();
+      const wasPaused = probe.paused;
+      const previousTime = probe.time;
+      probe.enabled = true;
+      probe.paused = false;
+      probe.play();
+      probe.time = THREE.MathUtils.euclideanModulo(seconds, vmdClip.duration);
+      mixer.update(0);
+      vrm.update(0);
+      vrm.scene.updateWorldMatrix(true, true);
+      const point = (boneName) => vrm.humanoid.getRawBoneNode(boneName).getWorldPosition(new THREE.Vector3()).toArray();
+      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(vrm.scene.getWorldQuaternion(new THREE.Quaternion())).normalize().toArray();
+      probe.time = previousTime;
+      probe.paused = wasPaused;
+      if (!wasRunning) probe.stop();
+      return {
+        time: seconds,
+        forward,
+        left: { hip: point('leftUpperLeg'), knee: point('leftLowerLeg'), ankle: point('leftFoot') },
+        right: { hip: point('rightUpperLeg'), knee: point('rightLowerLeg'), ankle: point('rightFoot') },
+      };
+    },
+    sampleClipTracksAt: (seconds) => {
+      const time = THREE.MathUtils.euclideanModulo(seconds, vmdClip.duration);
+      const result = {};
+      for (const track of vmdClip.tracks) {
+        if (!/(left|right)(UpperLeg|LowerLeg|Foot|UpperArm|LowerArm|Hand)\.quaternion$/.test(track.name)) continue;
+        const interpolant = track.createInterpolant();
+        result[track.name] = Array.from(interpolant.evaluate(time));
+      }
+      return result;
+    },
+  };
   setProgress(85,`VMD 转换完成（${vmdClip.duration.toFixed(1)}秒）`);
 }
 

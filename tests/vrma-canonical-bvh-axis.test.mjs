@@ -12,9 +12,9 @@ function bone(name, position) {
   return result;
 }
 
-// bvh2vrma consumes a canonical humanoid BVH. It is not the direct-VRM runtime
-// path in SystemAnimatorOnline, so a VRM0 coordinate flip must not be injected
-// into this intermediate representation.
+// bvh2vrma consumes a canonical humanoid BVH. The final VRM0 clip binder flips
+// X/Z once, so this stage deliberately pre-converts raw MMD motion to make the
+// fully composed VMD → BVH → VRMA → VRM pose bend forward.
 const hips = bone('hips', [0, 1, 0]);
 for (const side of ['left', 'right']) {
   const sign = side === 'left' ? 0.1 : -0.1;
@@ -41,10 +41,11 @@ const track = bvh.clip.tracks.find((candidate) => candidate.name.endsWith('right
 assert.ok(track, 'canonical BVH must contain the right-knee quaternion track');
 
 const sourceQ = new THREE.Quaternion(...source.rotation).normalize();
+const expectedQ = new THREE.Quaternion(-sourceQ.x, sourceQ.y, -sourceQ.z, sourceQ.w);
 const bvhQ = new THREE.Quaternion(...track.values.slice(0, 4)).normalize();
-const angularError = 2 * Math.acos(Math.min(1, Math.abs(sourceQ.dot(bvhQ))));
+const angularError = 2 * Math.acos(Math.min(1, Math.abs(expectedQ.dot(bvhQ))));
 assert.ok(
   angularError < 1e-5,
-  `canonical BVH must preserve raw VMD local rotation; got ${(angularError * 180 / Math.PI).toFixed(2)}° error`,
+  `BVH must pre-convert the VMD knee for final VRM0 binding; got ${(angularError * 180 / Math.PI).toFixed(2)}° error`,
 );
-console.log('canonical BVH keeps VMD local knee rotation');
+console.log('canonical BVH pre-converts VMD knee rotation for VRM0');
