@@ -257,11 +257,33 @@ async function loadVRM() {
     const mats = Array.isArray(child.material) ? child.material : [child.material];
     mats.forEach((m, i) => {
       if (m.type !== 'ShaderMaterial') return;
+      // Dump material info for debugging
+      let uniformNames = m.uniforms ? Object.keys(m.uniforms).join(',') : 'NO UNIFORMS';
+      console.log('MToon mesh:', child.name || 'unnamed', 'uniforms:', uniformNames);
+      
       let map = null, color = new THREE.Color(0xFFCCDD);
+      // VRM 0.x MToon uses MToonMaterial uniforms: _MainTex, _ShadeTexture, etc.
       try {
-        if (m.uniforms?._MainTex?.value?.image) map = m.uniforms._MainTex.value;
-        if (m.uniforms?._Color?.value) color.copy(m.uniforms._Color.value);
-      } catch(e) {}
+        if (m.uniforms) {
+          // Try common MToon uniform names for main texture
+          for (const texKey of ['_MainTex', '_mainTex', 'mainTex', 'map']) {
+            const u = m.uniforms[texKey];
+            if (u && u.value && u.value.image && (u.value.image.width > 0 || u.value.image.naturalWidth > 0)) {
+              map = u.value; break;
+            }
+          }
+          // Color
+          for (const colKey of ['_Color', '_color', 'color']) {
+            if (m.uniforms[colKey] && m.uniforms[colKey].value) {
+              const v = m.uniforms[colKey].value;
+              if (v.isColor) color.copy(v);
+              else if (Array.isArray(v)) color.setRGB(v[0], v[1], v[2]);
+              break;
+            }
+          }
+        }
+      } catch(e) { console.warn('Material conversion error:', e); }
+      
       const nm = new THREE.MeshStandardMaterial({
         color, map: map || undefined, roughness: 0.5, metalness: 0,
         side: THREE.DoubleSide, transparent: m.transparent, opacity: Math.max(m.opacity || 1, 0.01),
