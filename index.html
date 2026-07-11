@@ -11,8 +11,7 @@
     "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/",
     "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
-    "@pixiv/three-vrm-core": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-core@2.1.0/lib/three-vrm-core.module.js",
-    "@pixiv/three-vrm-materials-hdr-emissive-multiply": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-materials-hdr-emissive-multiply@2.1.0/lib/three-vrm-materials-hdr-emissive-multiply.module.js"
+    "@pixiv/three-vrm-core": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-core@2.1.0/lib/three-vrm-core.module.js"
   }
 }
 </script>
@@ -28,7 +27,6 @@ body {
 }
 canvas { touch-action: none; display: block; }
 
-/* Loading overlay */
 #loading {
   position: fixed; inset: 0;
   display: flex; flex-direction: column;
@@ -56,7 +54,6 @@ canvas { touch-action: none; display: block; }
 }
 #loading p { margin-top: 12px; font-size: 13px; color: #888; }
 
-/* Controls overlay */
 #controls {
   position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
   display: flex; gap: 12px; align-items: center;
@@ -86,7 +83,6 @@ canvas { touch-action: none; display: block; }
   font-variant-numeric: tabular-nums;
 }
 
-/* Info overlay */
 #info {
   position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
   z-index: 50;
@@ -100,45 +96,22 @@ canvas { touch-action: none; display: block; }
   border: 1px solid rgba(255,255,255,0.06);
   pointer-events: none;
 }
-
-/* Drag zone */
-#dropzone {
-  position: fixed; inset: 80px; z-index: 200;
-  border: 3px dashed rgba(233,69,96,0.4);
-  border-radius: 24px;
-  display: none;
-  align-items: center; justify-content: center;
-  background: rgba(26,26,46,0.85);
-  backdrop-filter: blur(12px);
-  font-size: 20px; color: #e94560;
-  pointer-events: none;
-}
-#dropzone.drag-over { display: flex; border-color: #e94560; background: rgba(26,26,46,0.95); }
 </style>
 </head>
 <body>
 
-<!-- Loading -->
 <div id="loading">
   <h1>🎵 VRM + VMD Dance</h1>
   <div class="loader-bar"><div class="fill" id="progress-fill"></div></div>
   <p id="status-text">加载中...</p>
 </div>
 
-<!-- Drop zone -->
-<div id="dropzone">📁 拖放 VRM 或 VMD 文件到此处</div>
-
-<!-- Info -->
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
 
-<!-- Controls -->
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
 </div>
-
-<!-- Debug overlay -->
-<div id="debugOverlay" style="position:fixed;top:50px;left:10px;z-index:200;background:rgba(0,0,0,0.7);color:#0f0;font-size:11px;padding:8px 12px;border-radius:6px;font-family:monospace;white-space:pre;pointer-events:none;max-width:400px;max-height:200px;overflow:auto;">init...</div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -147,114 +120,51 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
 
-const $debug = document.getElementById('debugOverlay');
-function dbg(msg) { 
-  $debug.textContent += '\n' + msg;
-  console.log(msg);
-}
-
-// ─── Configuration ──────────────────────────────────────
+// ─── Config ──────────────────────────────────────────
 
 const VMD_FPS = 30;
 const cfg = {
   modelPath: './models/猫女郎.vrm',
   vmdPaths: ['./vmd/兰若酒醉的蝴蝶mmd数据.vmd'],
   audioPath: './audio/酒醉的蝴蝶音频.wav',
-  vrmScale: 1.0,
 };
 
-// ─── DOM refs ────────────────────────────────────────────
+// ─── DOM ─────────────────────────────────────────────
 
 const loadingEl = document.getElementById('loading');
 const progressFill = document.getElementById('progress-fill');
 const statusText = document.getElementById('status-text');
 const btnPlay = document.getElementById('btnPlay');
 const timeDisplay = document.getElementById('timeDisplay');
-const dropzone = document.getElementById('dropzone');
 
 function setProgress(pct, msg) {
   progressFill.style.width = Math.min(pct, 100) + '%';
   if (msg) statusText.textContent = msg;
 }
 
-// ─── Bone Mapping (from SystemAnimatorOnline) ─────────────
+// ─── Bone Mapping (SystemAnimatorOnline core) ─────────
 
 const boneMapMMDToVRM = {
-  'センター': 'hips',
-  '上半身': 'spine',
-  '上半身2': 'chest',
-  '上半身3': 'upperChest',
-  '首': 'neck',
-  '頭': 'head',
-  '右肩': 'rightShoulder',
-  '右腕': 'rightUpperArm',
-  '右ひじ': 'rightLowerArm',
-  '右手首': 'rightHand',
-  '右親指０': 'rightThumbMetacarpal',
-  '右親指１': 'rightThumbProximal',
-  '右親指２': 'rightThumbDistal',
-  '右小指１': 'rightLittleProximal',
-  '右小指２': 'rightLittleIntermediate',
-  '右小指３': 'rightLittleDistal',
-  '右薬指１': 'rightRingProximal',
-  '右薬指２': 'rightRingIntermediate',
-  '右薬指３': 'rightRingDistal',
-  '右中指１': 'rightMiddleProximal',
-  '右中指２': 'rightMiddleIntermediate',
-  '右中指３': 'rightMiddleDistal',
-  '右人指１': 'rightIndexProximal',
-  '右人指２': 'rightIndexIntermediate',
-  '右人指３': 'rightIndexDistal',
-  '左肩': 'leftShoulder',
-  '左腕': 'leftUpperArm',
-  '左ひじ': 'leftLowerArm',
-  '左手首': 'leftHand',
-  '左親指０': 'leftThumbMetacarpal',
-  '左親指１': 'leftThumbProximal',
-  '左親指２': 'leftThumbDistal',
-  '左小指１': 'leftLittleProximal',
-  '左小指２': 'leftLittleIntermediate',
-  '左小指３': 'leftLittleDistal',
-  '左薬指１': 'leftRingProximal',
-  '左薬指２': 'leftRingIntermediate',
-  '左薬指３': 'leftRingDistal',
-  '左中指１': 'leftMiddleProximal',
-  '左中指２': 'leftMiddleIntermediate',
-  '左中指３': 'leftMiddleDistal',
-  '左人指１': 'leftIndexProximal',
-  '左人指２': 'leftIndexIntermediate',
-  '左人指３': 'leftIndexDistal',
-  '右目': 'rightEye',
-  '左目': 'leftEye',
-  '右足': 'rightUpperLeg',
-  '右ひざ': 'rightLowerLeg',
-  '右足首': 'rightFoot',
-  '右足先EX': 'rightToes',
-  '左足': 'leftUpperLeg',
-  '左ひざ': 'leftLowerLeg',
-  '左足首': 'leftFoot',
-  '左足先EX': 'leftToes',
+  'センター': 'hips', '上半身': 'spine', '上半身2': 'chest', '上半身3': 'upperChest',
+  '首': 'neck', '頭': 'head',
+  '右肩': 'rightShoulder', '右腕': 'rightUpperArm', '右ひじ': 'rightLowerArm', '右手首': 'rightHand',
+  '右親指０': 'rightThumbMetacarpal', '右親指１': 'rightThumbProximal', '右親指２': 'rightThumbDistal',
+  '右小指１': 'rightLittleProximal', '右小指２': 'rightLittleIntermediate', '右小指３': 'rightLittleDistal',
+  '右薬指１': 'rightRingProximal', '右薬指２': 'rightRingIntermediate', '右薬指３': 'rightRingDistal',
+  '右中指１': 'rightMiddleProximal', '右中指２': 'rightMiddleIntermediate', '右中指３': 'rightMiddleDistal',
+  '右人指１': 'rightIndexProximal', '右人指２': 'rightIndexIntermediate', '右人指３': 'rightIndexDistal',
+  '左肩': 'leftShoulder', '左腕': 'leftUpperArm', '左ひじ': 'leftLowerArm', '左手首': 'leftHand',
+  '左親指０': 'leftThumbMetacarpal', '左親指１': 'leftThumbProximal', '左親指２': 'leftThumbDistal',
+  '左小指１': 'leftLittleProximal', '左小指２': 'leftLittleIntermediate', '左小指３': 'leftLittleDistal',
+  '左薬指１': 'leftRingProximal', '左薬指２': 'leftRingIntermediate', '左薬指３': 'leftRingDistal',
+  '左中指１': 'leftMiddleProximal', '左中指２': 'leftMiddleIntermediate', '左中指３': 'leftMiddleDistal',
+  '左人指１': 'leftIndexProximal', '左人指２': 'leftIndexIntermediate', '左人指３': 'leftIndexDistal',
+  '右目': 'rightEye', '左目': 'leftEye',
+  '右足': 'rightUpperLeg', '右ひざ': 'rightLowerLeg', '右足首': 'rightFoot', '右足先EX': 'rightToes',
+  '左足': 'leftUpperLeg', '左ひざ': 'leftLowerLeg', '左足首': 'leftFoot', '左足先EX': 'leftToes',
 };
 
-// Morph mapping (VRM 1.0)
-const morphMapMMDToVRM1 = {
-  'あ': 'aa', 'い': 'ih', 'う': 'ou', 'え': 'ee', 'お': 'oh',
-  'まばたき': 'blink',
-  'ウィンク': 'blinkLeft', 'ウィンク２': 'blinkLeft',
-  'ウィンク右': 'blinkRight',
-  'にこり': 'relaxed', '困る': 'sad', '怒り': 'angry', '笑い': 'happy',
-};
-
-// Morph mapping (VRM 0.x)
-const morphMapMMDToVRM0 = {
-  'あ': 'a', 'い': 'i', 'う': 'u', 'え': 'e', 'お': 'o',
-  'まばたき': 'blink',
-  'ウィンク': 'blink_l', 'ウィンク２': 'blink_l',
-  'ウィンク右': 'blink_r',
-  'にこり': 'fun', '困る': 'sorrow', '怒り': 'angry', '笑い': 'joy',
-};
-
-// ─── Scene Setup ─────────────────────────────────────────
+// ─── Scene Setup ─────────────────────────────────────
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -270,56 +180,34 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1a2e);
 
 // Lights
-const ambient = new THREE.AmbientLight(0x404060, 0.6);
-scene.add(ambient);
-
-const hemi = new THREE.HemisphereLight(0x87CEEB, 0x3a7d44, 0.8);
-scene.add(hemi);
+scene.add(new THREE.AmbientLight(0x606080, 0.8));
+scene.add(new THREE.HemisphereLight(0x87CEEB, 0x3a7d44, 0.8));
 
 const dirLight = new THREE.DirectionalLight(0xFFEECC, 2.0);
 dirLight.position.set(8, 15, 10);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 2048;
-dirLight.shadow.mapSize.height = 2048;
-dirLight.shadow.camera.near = 0.5;
-dirLight.shadow.camera.far = 50;
-dirLight.shadow.camera.left = -10;
-dirLight.shadow.camera.right = 10;
-dirLight.shadow.camera.top = 10;
-dirLight.shadow.camera.bottom = -10;
+dirLight.shadow.mapSize.set(2048, 2048);
 scene.add(dirLight);
-
-const rimLight = new THREE.DirectionalLight(0x8888FF, 0.5);
-rimLight.position.set(-5, 3, -8);
-scene.add(rimLight);
-
-// Fill light from all angles
-const fill2 = new THREE.DirectionalLight(0xFFFF88, 0.4);
-fill2.position.set(-3, 5, 5);
-scene.add(fill2);
-const fill3 = new THREE.DirectionalLight(0x88FFFF, 0.3);
-fill3.position.set(3, 0, -5);
-scene.add(fill3);
+scene.add(new THREE.DirectionalLight(0x8888FF, 0.5).position.set(-5, 3, -8));
+scene.add(new THREE.DirectionalLight(0xFFFF88, 0.4).position.set(-3, 5, 5));
+scene.add(new THREE.DirectionalLight(0x88FFFF, 0.3).position.set(3, 0, -5));
 
 // Ground
-const groundGeo = new THREE.PlaneGeometry(30, 30);
-const groundMat = new THREE.MeshStandardMaterial({
-  color: 0x2a2a4a, roughness: 0.9, metalness: 0,
-});
-const ground = new THREE.Mesh(groundGeo, groundMat);
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(30, 30),
+  new THREE.MeshStandardMaterial({ color: 0x2a2a4a, roughness: 0.9 })
+);
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.01;
 ground.receiveShadow = true;
 scene.add(ground);
-
-const gridHelper = new THREE.GridHelper(30, 30, 0x4a4a6a, 0x3a3a5a);
-gridHelper.position.y = 0;
-scene.add(gridHelper);
+const grid = new THREE.GridHelper(30, 30, 0x4a4a6a, 0x3a3a5a);
+grid.position.y = 0;
+scene.add(grid);
 
 // Camera
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(0, 1.5, 4);
-
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 0);
 controls.enableDamping = true;
@@ -330,569 +218,239 @@ controls.maxPolarAngle = Math.PI * 0.55;
 controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 controls.update();
 
-// ─── VRM Load ────────────────────────────────────────────
+// ─── VRM Load ────────────────────────────────────────
 
 let vrm = null;
 let vrmScene = null;
-let currentHelper = null;
 
 async function loadVRM() {
   setProgress(10, '加载 VRM 模型...');
-
   const loader = new GLTFLoader();
-  loader.register((parser) => new THREEVRM.VRMLoaderPlugin(parser));
+  loader.register(parser => new THREEVRM.VRMLoaderPlugin(parser));
 
   const gltf = await new Promise((resolve, reject) => {
-    loader.load(cfg.modelPath, resolve, (xhr) => {
-      const pct = 10 + (xhr.loaded / xhr.total) * 40;
-      setProgress(pct, `加载 VRM 模型... ${Math.round(xhr.loaded / 1024)}KB`);
+    loader.load(cfg.modelPath, resolve, xhr => {
+      setProgress(10 + (xhr.loaded / xhr.total) * 40, `加载 VRM... ${Math.round(xhr.loaded/1024)}KB`);
     }, reject);
   });
 
   vrm = gltf.userData.vrm;
   vrmScene = gltf.scene;
 
-  // Scale to fit
+  // Normalize scale
   const box = new THREE.Box3().setFromObject(vrmScene);
-  const size = box.getSize(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const targetHeight = 1.6;
-  const scale = targetHeight / maxDim;
+  const scale = 1.6 / Math.max(box.getSize(new THREE.Vector3()).x, box.getSize(new THREE.Vector3()).y, box.getSize(new THREE.Vector3()).z);
   vrmScene.scale.set(scale, scale, scale);
-
   vrmScene.position.y = 0;
-  
-  // Force all meshes to use basic material for visibility testing
-  vrmScene.traverse((child) => {
+
+  vrmScene.traverse(child => {
     if (child.isMesh) {
       child.castShadow = true;
       child.receiveShadow = true;
       child.frustumCulled = false;
-      // Force material visible
-      if (child.material) {
-        if (Array.isArray(child.material)) {
-          child.material.forEach(m => { m.transparent = false; m.opacity = 1; m.depthWrite = true; });
-        } else {
-          child.material.transparent = false;
-          child.material.opacity = 1;
-          child.material.depthWrite = true;
-        }
-      }
     }
+  });
+
+  // Convert MToon ShaderMaterials to StandardMaterials for visibility
+  vrmScene.traverse(child => {
+    if (!child.isMesh || !child.material) return;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    mats.forEach((m, i) => {
+      if (m.type !== 'ShaderMaterial') return;
+      let map = null, color = new THREE.Color(0xFFCCDD);
+      try {
+        if (m.uniforms?._MainTex?.value?.image) map = m.uniforms._MainTex.value;
+        if (m.uniforms?._Color?.value) color.copy(m.uniforms._Color.value);
+      } catch(e) {}
+      const nm = new THREE.MeshStandardMaterial({
+        color, map: map || undefined, roughness: 0.5, metalness: 0,
+        side: THREE.DoubleSide, transparent: m.transparent, opacity: Math.max(m.opacity || 1, 0.01),
+        depthWrite: true, depthTest: true,
+      });
+      if (Array.isArray(child.material)) child.material[i] = nm;
+      else child.material = nm;
+    });
   });
 
   scene.add(vrmScene);
-
-  // Update VRM
   vrm.update(0);
-
-  // Debug: check scene
-  let meshCount = 0;
-  vrmScene.traverse(c => { if (c.isMesh) meshCount++; });
-  dbg(`VRM loaded: ${meshCount} meshes, children: ${vrmScene.children.length}`);
-  dbg(`VRM scene scale: ${vrmScene.scale.toArray().join(',')}`);
-  dbg(`VRM meta version: ${vrm.meta?.metaVersion || 'unknown'}`);
-  const vrmBones = Object.keys(vrm.humanoid?.humanBones || {});
-  dbg(`VRM humanoid bones: ${vrmBones.join(', ')}`);
-
-  setProgress(55, `VRM 模型加载完成 (${meshCount} 网格)`);
-
-  // Debug material types
-  const matTypes = {};
-  vrmScene.traverse(c => {
-    if (c.isMesh && c.material) {
-      const mats = Array.isArray(c.material) ? c.material : [c.material];
-      mats.forEach(m => { matTypes[m.type] = (matTypes[m.type]||0) + 1; });
-    }
-  });
-  dbg(`Materials: ${JSON.stringify(matTypes)}`);
-
-  // Fix: convert ShaderMaterial (MToon) to StandardMaterial for visibility
-  // VRM 0.x MToon shaders may not render correctly with current three-vrm version
-  let converted = 0;
-  vrmScene.traverse(c => {
-    if (c.isMesh && c.material) {
-      const mats = Array.isArray(c.material) ? c.material : [c.material];
-      mats.forEach((m, i) => {
-        if (m.type === 'ShaderMaterial') {
-          let map = null;
-          let color = new THREE.Color(0xFF88AA);
-          // Try to extract main texture from MToon shader uniforms
-          try {
-            if (m.uniforms && m.uniforms._MainTex && m.uniforms._MainTex.value) {
-              const tex = m.uniforms._MainTex.value;
-              if (tex && tex.image && (tex.image.width > 0 || tex.image.naturalWidth > 0)) {
-                map = tex;
-              }
-            }
-            if (m.uniforms && m.uniforms._Color && m.uniforms._Color.value) {
-              color.copy(m.uniforms._Color.value);
-            }
-          } catch(e) {}
-          // Check if _ShadeTexture exists for additional detail
-          let shadeMap = null;
-          try {
-            if (m.uniforms && m.uniforms._ShadeTexture && m.uniforms._ShadeTexture.value) {
-              shadeMap = m.uniforms._ShadeTexture.value;
-            }
-          } catch(e) {}
-          // Use emissive map for extra visibility  
-          let emitMap = null;
-          let emitColor = new THREE.Color(0x000000);
-          try {
-            if (m.uniforms && m.uniforms._EmissionMap && m.uniforms._EmissionMap.value) {
-              emitMap = m.uniforms._EmissionMap.value;
-            }
-            if (m.uniforms && m.uniforms._EmissionColor && m.uniforms._EmissionColor.value) {
-              emitColor.copy(m.uniforms._EmissionColor.value);
-            }
-          } catch(e) {}
-          const newMat = new THREE.MeshStandardMaterial({
-            color: color,
-            map: map || undefined,
-            roughness: 0.5,
-            metalness: 0.0,
-            side: THREE.DoubleSide,
-            emissive: emitColor,
-            emissiveMap: emitMap || undefined,
-            emissiveIntensity: 0.3,
-            transparent: m.transparent,
-            opacity: Math.max(m.opacity || 1, 0.01),
-            depthWrite: true,
-            depthTest: true,
-          });
-          if (Array.isArray(c.material)) {
-            c.material[i] = newMat;
-          } else {
-            c.material = newMat;
-          }
-          converted++;
-        }
-      });
-    }
-  });
-  dbg(`Converted ${converted} ShaderMaterials → MeshStandardMaterial`);
-
-  // DEBUG: Add a test box to verify rendering works
-  const testBox = new THREE.Mesh(
-    new THREE.BoxGeometry(0.3, 0.3, 0.3),
-    new THREE.MeshStandardMaterial({ color: 0xFF0000 })
-  );
-  testBox.position.set(0, 0.5, 1.5);
-  scene.add(testBox);
-  dbg('Added red test box at (0, 0.5, 1.5)');
-  
-  // Set VRM to wireframe as fallback visibility check
-  vrmScene.traverse(c => {
-    if (c.isMesh && c.material) {
-      const mats = Array.isArray(c.material) ? c.material : [c.material];
-      mats.forEach(m => {
-        if (m.type === 'MeshStandardMaterial') {
-          m.wireframe = false;
-        }
-      });
-    }
-  });
+  setProgress(55, 'VRM 加载完成');
 }
 
-// ─── VMD Load & Parse ────────────────────────────────────
+// ─── VMD Load ────────────────────────────────────────
 
-let vmdData = null; // { bones: [], morphs: [], totalFrames: 0 }
+let vmdData = null;
 
 async function loadVMD() {
-  setProgress(55, '加载 VMD 动作数据...');
-
+  setProgress(55, '加载 VMD 动作...');
   const loader = new MMDLoader();
-  const url = cfg.vmdPaths[0];
 
   vmdData = await new Promise((resolve, reject) => {
-    loader.loadVMD(url, resolve, (xhr) => {
-      const pct = 55 + (xhr.loaded / xhr.total) * 25;
-      setProgress(pct, `加载 VMD 动作... ${Math.round(xhr.loaded / 1024)}KB`);
+    loader.loadVMD(cfg.vmdPaths[0], resolve, xhr => {
+      setProgress(55 + (xhr.loaded / xhr.total) * 25, `加载 VMD... ${Math.round(xhr.loaded/1024)}KB`);
     }, reject);
   });
 
-    // Debug: check raw VMD structure
-  dbg(`Raw VMD: keys=${Object.keys(vmdData).join(', ')}`);
-  const boneKey = vmdData.motions ? 'motions' : (vmdData.bones ? 'bones' : null);
-  dbg(`VMD boneKey="${boneKey}", count=${vmdData[boneKey]?.length || 0}, morphs=${vmdData.morphs?.length || 0}, camera=${vmdData.camera?.length || 0}`);
-
-  // Check motion keyframe structure
-  if (boneKey && vmdData[boneKey] && vmdData[boneKey].length > 0) {
-    const kf = vmdData[boneKey][0];
-    const kfKeys = Object.keys(kf).join(', ');
-    dbg(`VMD motion[0] keys: ${kfKeys}`);
-    dbg(`VMD motion[0] values: ${JSON.stringify(kf).substring(0,200)}`);
-  }
-
-  // Normalize: unify property names and bone naming
-  // CDN version uses {boneName, frameNum} vs local {name, frame}
-  if (!vmdData.bones && vmdData.motions) {
-    vmdData.bones = vmdData.motions;
-    dbg(`Normalized: vmdData.motions → vmdData.bones (${vmdData.bones.length} items)`);
-  }
-
-  // Normalize property names: boneName→name, frameNum→frame
-  let renamedCount = 0;
-  if (vmdData.bones && vmdData.bones.length > 0) {
+  // Normalize: CDN may return {motions, boneName, frameNum} vs {bones, name, frame}
+  if (!vmdData.bones && vmdData.motions) vmdData.bones = vmdData.motions;
+  if (vmdData.bones) {
     vmdData.bones.forEach(kf => {
-      if (kf.boneName !== undefined && kf.name === undefined) {
-        kf.name = kf.boneName;
-        renamedCount++;
-      }
-      if (kf.frameNum !== undefined && kf.frame === undefined) {
-        kf.frame = kf.frameNum;
-      }
+      if (kf.boneName !== undefined && kf.name === undefined) kf.name = kf.boneName;
+      if (kf.frameNum !== undefined && kf.frame === undefined) kf.frame = kf.frameNum;
     });
-    if (renamedCount > 0) dbg(`Normalized: boneName→name (${renamedCount} items)`);
-
-    // Get unique bone names
-    const boneNames = [...new Set(vmdData.bones.map(kf => kf.name))].filter(Boolean);
-    dbg(`VMD unique bone names (${boneNames.length}): ${boneNames.slice(0,20).join(', ')}`);
   }
 
-  // Sort keyframes by bone name and frame number
+  // Build bone tracks
   const boneTracks = {};
   if (vmdData.bones) {
     vmdData.bones.forEach(kf => {
       if (!boneTracks[kf.name]) boneTracks[kf.name] = [];
       boneTracks[kf.name].push(kf);
     });
-    Object.values(boneTracks).forEach(track => track.sort((a, b) => a.frame - b.frame));
+    Object.values(boneTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
   }
   vmdData._boneTracks = boneTracks;
 
-  // Same for morphs
+  // Morph tracks
   const morphTracks = {};
   if (vmdData.morphs) {
     vmdData.morphs.forEach(kf => {
       if (!morphTracks[kf.name]) morphTracks[kf.name] = [];
       morphTracks[kf.name].push(kf);
     });
-    Object.values(morphTracks).forEach(track => track.sort((a, b) => a.frame - b.frame));
+    Object.values(morphTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
   }
   vmdData._morphTracks = morphTracks;
 
-  // Calculate total duration
-  let maxFrame = 0;
-  if (vmdData.bones) {
-    vmdData.bones.forEach(kf => { if (kf.frame > maxFrame) maxFrame = kf.frame; });
-  }
-  if (vmdData.morphs) {
-    vmdData.morphs.forEach(kf => { if (kf.frame > maxFrame) maxFrame = kf.frame; });
-  }
-  vmdData.totalFrames = maxFrame;
+  // Total duration
+  vmdData.totalFrames = 0;
+  if (vmdData.bones) vmdData.bones.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
+  if (vmdData.morphs) vmdData.morphs.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
 
-  setProgress(85, `VMD 加载完成 (${vmdData.bones?.length || 0} 骨骼关键帧, ${vmdData.totalFrames} 帧)`);
+  setProgress(85, 'VMD 加载完成');
 }
 
-// ─── Audio Load ───────────────────────────────────────────
+// ─── Audio Load ───────────────────────────────────────
 
-let audioBuffer = null;
-let audioCtx = null;
-let sourceNode = null;
-let gainNode = null;
-let audioStartTime = 0;
-let audioPauseOffset = 0;
-let isAudioInitialized = false;
+let audioCtx = null, audioBuffer = null, sourceNode = null, gainNode = null;
+let audioStartTime = 0, audioPauseOffset = 0, isAudioReady = false;
 
 async function loadAudio() {
   setProgress(85, '加载音频...');
   const resp = await fetch(cfg.audioPath);
-  const arrayBuffer = await resp.arrayBuffer();
+  const ab = await resp.arrayBuffer();
   audioCtx = new AudioContext();
-  audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  audioBuffer = await audioCtx.decodeAudioData(ab);
   gainNode = audioCtx.createGain();
   gainNode.gain.value = 0.7;
   gainNode.connect(audioCtx.destination);
-  isAudioInitialized = true;
+  isAudioReady = true;
   setProgress(100, '加载完成 ✓');
-  setTimeout(() => { loadingEl.classList.add('hidden'); }, 500);
+  setTimeout(() => loadingEl.classList.add('hidden'), 500);
 }
 
-// ─── VMD Cubic Bezier Interpolation ──────────────────────
+// ─── Animation System (VMD → VRM via Bone Mapping) ───
 
-/**
- * VMD interpolation: 24 bytes, 4 curves (x, y, z, rotation).
- * Each curve: [x1, y1, x2, y2] where values are 0-127, mapped to 0-1.
- */
+const _q0 = new THREE.Quaternion(), _q1 = new THREE.Quaternion(), _v3 = new THREE.Vector3();
+
+let animBones = [];
+let animMorphs = [];
+let isPlaying = false;
+let animTime = 0;
+const clock = new THREE.Clock();
+
 function interpolateVMD(curve, time, kf0, kf1) {
-  if (!kf0 && !kf1) return 0;
+  if (!kf1 && !kf0) return 0;
   if (!kf1) return 1;
   if (!kf0) return 0;
-
   const frameDiff = kf1.frame - kf0.frame;
   if (frameDiff <= 0) return 1;
-
-  // t is the raw linear ratio between the two keyframes
   const t = (time - kf0.frame) / frameDiff;
   if (t <= 0) return 0;
   if (t >= 1) return 1;
 
-  // Extract bezier control points for this axis
-  const idxMap = [0, 4, 8, 12]; // curve offset in interpolation array for X, Y, Z, rotation
-  const axis = 0; // We interpolate time uniformly using the X curve
-  const base = idxMap[axis];
-  const cpx1 = curve[base] / 127; // cx1
-  const cpy1 = curve[base + 1] / 127; // cy1
-  const cpx2 = curve[base + 2] / 127; // cx2
-  const cpy2 = curve[base + 3] / 127; // cy2
-
-  // Solve for t_bezier where Bx(t_bezier) = input_t using Newton's method
-  // B(t) = 3(1-t)²*t*P1 + 3(1-t)*t²*P2 + t³
-  // Bx(t) = 3(1-t)²*t*cpx1 + 3(1-t)*t²*cpx2 + t³
+  // Cubic Bezier interpolation (VMD format)
+  const base = 0;
+  const cpx1 = curve[base] / 127, cpy1 = curve[base + 1] / 127;
+  const cpx2 = curve[base + 2] / 127, cpy2 = curve[base + 3] / 127;
 
   let guess = t;
   for (let i = 0; i < 8; i++) {
-    const t2 = guess * guess;
-    const t3 = t2 * guess;
-    const omt = 1 - guess;
-    const omt2 = omt * omt;
-    // Bx
-    const bx = 3 * omt2 * guess * cpx1 + 3 * omt * t2 * cpx2 + t3;
-    // dBx/dt
-    const dbx = 3 * (omt2 - 2 * omt * guess) * cpx1 + 3 * (2 * omt * guess - t2) * cpx2 + 3 * t2;
-
-    if (Math.abs(bx - t) < 1e-5) break;
-    if (Math.abs(dbx) < 1e-10) break;
-
-    guess = guess - (bx - t) / dbx;
-    guess = Math.max(0, Math.min(1, guess));
+    const g2 = guess * guess, g3 = g2 * guess, omg = 1 - guess, omg2 = omg * omg;
+    const bx = 3 * omg2 * guess * cpx1 + 3 * omg * g2 * cpx2 + g3;
+    const dbx = 3 * (omg2 - 2 * omg * guess) * cpx1 + 3 * (2 * omg * guess - g2) * cpx2 + 3 * g2;
+    if (Math.abs(bx - t) < 1e-5 || Math.abs(dbx) < 1e-10) break;
+    guess = Math.max(0, Math.min(1, guess - (bx - t) / dbx));
   }
-
-  // Evaluate By at the found t_bezier
-  const g2 = guess * guess;
-  const g3 = g2 * guess;
-  const omg = 1 - guess;
-  const omg2 = omg * omg;
-  const by = 3 * omg2 * guess * cpy1 + 3 * omg * g2 * cpy2 + g3;
-
-  return Math.max(0, Math.min(1, by));
+  const g2 = guess * guess, g3 = g2 * guess, omg = 1 - guess, omg2 = omg * omg;
+  return Math.max(0, Math.min(1, 3 * omg2 * guess * cpy1 + 3 * omg * g2 * cpy2 + g3));
 }
 
-// ─── Quaternion Slerp ─────────────────────────────────────
-
-function slerp(qa, qb, t) {
-  const qm = new THREE.Quaternion();
-  let cosHalfTheta = qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w;
-  if (cosHalfTheta < 0) {
-    qb = qb.clone().negate();
-    cosHalfTheta = -cosHalfTheta;
-  }
-  if (Math.abs(cosHalfTheta) >= 0.999) {
-    qm.x = qa.x; qm.y = qa.y; qm.z = qa.z; qm.w = qa.w;
-    return qm;
-  }
-  const halfTheta = Math.acos(cosHalfTheta);
-  const sinHalfTheta = Math.sqrt(1 - cosHalfTheta * cosHalfTheta);
-  if (Math.abs(sinHalfTheta) < 0.001) {
-    qm.x = (qa.x + qb.x) * 0.5;
-    qm.y = (qa.y + qb.y) * 0.5;
-    qm.z = (qa.z + qb.z) * 0.5;
-    qm.w = (qa.w + qb.w) * 0.5;
-    return qm;
-  }
-  const a = Math.sin((1 - t) * halfTheta) / sinHalfTheta;
-  const b = Math.sin(t * halfTheta) / sinHalfTheta;
-  qm.x = qa.x * a + qb.x * b;
-  qm.y = qa.y * a + qb.y * b;
-  qm.z = qa.z * a + qb.z * b;
-  qm.w = qa.w * a + qb.w * b;
-  return qm;
-}
-
-// ─── Animation State ─────────────────────────────────────
-
-const clock = new THREE.Clock();
-let isPlaying = false;
-let animTime = 0; // in seconds
-
-// Pre-compute: for each MMD bone name that maps to VRM, store the track data
-let animBones = []; // [{ mmdName, vrmName, track, isRoot }]
-
-function setupAnimationTracks() {
+function setupAnimation() {
   if (!vmdData || !vrm) return;
-
-  // Check VRM version
-  const isVRM1 = vrm.meta && parseInt(vrm.meta.metaVersion) > 0;
-  const morphMap = isVRM1 ? morphMapMMDToVRM1 : morphMapMMDToVRM0;
-
-  dbg(`VRM version: ${isVRM1 ? '1.x' : '0.x'}`);
-
   animBones = [];
   for (const mmdName in boneMapMMDToVRM) {
     const track = vmdData._boneTracks[mmdName];
     if (!track || track.length === 0) continue;
     const vrmName = boneMapMMDToVRM[mmdName];
-    // Check if VRM has this bone
-    let boneNode;
-    try {
-      boneNode = vrm.humanoid?.getNormalizedBoneNode?.(vrmName) || vrm.humanoid?.getBoneNode?.(vrmName);
-    } catch (e) { /* skip */ }
-    if (!boneNode) continue;
-    animBones.push({
-      mmdName,
-      vrmName,
-      track,
-      isRoot: mmdName === 'センター',
-      boneNode,
-    });
+    let bn;
+    try { bn = vrm.humanoid?.getNormalizedBoneNode?.(vrmName) || vrm.humanoid?.getBoneNode?.(vrmName); } catch (e) {}
+    if (!bn) continue;
+    animBones.push({ mmdName, vrmName, track, isRoot: mmdName === 'センター', boneNode: bn });
   }
-
-  dbg(`Mapped ${animBones.length} bones from VMD to VRM`);
-  // Log first 10 mapped bones
-  let boneLog = '';
-  animBones.slice(0,10).forEach(b => { boneLog += `\n  ${b.mmdName}→${b.vrmName}(${b.track.length}kf)`; });
-  if (animBones.length > 10) boneLog += `\n  ... and ${animBones.length-10} more`;
-  dbg(boneLog);
-
-  // Log unmapped VMD bones
-  const unmappedBones = [];
-  for (const mmdName in vmdData._boneTracks) {
-    if (!boneMapMMDToVRM[mmdName]) {
-      unmappedBones.push(mmdName);
-    }
-  }
-  if (unmappedBones.length > 0) {
-    dbg(`⚠️ Unmapped VMD bones (${unmappedBones.length}): ${unmappedBones.slice(0,20).join(', ')}`);
-  }
-
-  // Morph mapping
   animMorphs = [];
-  for (const mmdName in morphMap) {
-    const track = vmdData._morphTracks[mmdName];
-    if (!track || track.length === 0) continue;
-    const vrmName = morphMap[mmdName];
-    animMorphs.push({ mmdName, vrmName, track });
-  }
-  console.log(`[DEBUG] Mapped ${animMorphs.length} morphs`);
 }
-let animMorphs = [];
-
-// ─── Apply Frame ──────────────────────────────────────────
-
-const _q0 = new THREE.Quaternion();
-const _q1 = new THREE.Quaternion();
-const _euler = new THREE.Euler();
-const _v3 = new THREE.Vector3();
 
 function applyVMDAtFrame(frame) {
-  if (!vrm || !vmdData) {
-    //console.log('[DEBUG] applyVMDAtFrame skipped: no vrm or vmdData');
-    return;
-  }
+  if (!vrm || !vmdData || animBones.length === 0) return;
 
-  // Debug first frame
-  const frameInt = Math.floor(frame);
-  if (frameInt % 300 === 0 || animBones.length === 0) {
-    dbg(`applyVMDAtFrame frame=${frame.toFixed(1)}, bones=${animBones.length}, morphs=${animMorphs.length}`);
-  }
-
-  // Apply bone transforms
   animBones.forEach(({ mmdName, vrmName, track, isRoot, boneNode }) => {
-    if (!boneNode) return;
-
-    // Find adjacent keyframes
-    const length = track.length;
-    if (frame < track[0].frame) {
-      // Before first keyframe: use first keyframe's transform
+    const len = track.length;
+    if (frame <= track[0].frame) {
       const kf = track[0];
       boneNode.quaternion.fromArray(kf.rotation);
-      if (isRoot) boneNode.position.fromArray(kf.position);
+      if (isRoot) boneNode.position.set(-kf.position[0], kf.position[1], kf.position[2]);
       return;
     }
-    if (frame >= track[length - 1].frame) {
-      const kf = track[length - 1];
+    if (frame >= track[len - 1].frame) {
+      const kf = track[len - 1];
       boneNode.quaternion.fromArray(kf.rotation);
-      if (isRoot) {
-        const pos = kf.position;
-        boneNode.position.set(-pos[0], pos[1], pos[2]);
-      }
+      if (isRoot) boneNode.position.set(-kf.position[0], kf.position[1], kf.position[2]);
       return;
     }
-
-    // Binary search for adjacent keyframes
-    let lo = 0, hi = length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (track[mid].frame <= frame) lo = mid;
-      else hi = mid;
-    }
-    const kf0 = track[lo];
-    const kf1 = track[hi];
-
-    // Interpolation factor with cubic bezier
+    let lo = 0, hi = len - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (track[m].frame <= frame) lo = m; else hi = m; }
+    const kf0 = track[lo], kf1 = track[hi];
     const interp = interpolateVMD(kf0.interpolation, frame, kf0, kf1);
 
-    // Interpolate rotation (slerp)
-    _q0.fromArray(kf0.rotation);
-    _q1.fromArray(kf1.rotation);
-    const q = slerp(_q0, _q1, interp);
-    boneNode.quaternion.copy(q);
-
-    // Position (only for root/center bone)
+    _q0.fromArray(kf0.rotation); _q1.fromArray(kf1.rotation);
+    const cos = _q0.x * _q1.x + _q0.y * _q1.y + _q0.z * _q1.z + _q0.w * _q1.w;
+    if (cos < 0) { _q1.x = -_q1.x; _q1.y = -_q1.y; _q1.z = -_q1.z; _q1.w = -_q1.w; }
+    const theta = Math.acos(Math.abs(cos));
+    const sinT = Math.sin(theta);
+    if (sinT < 0.001) { boneNode.quaternion.copy(_q0); }
+    else {
+      const a = Math.sin((1 - interp) * theta) / sinT;
+      const b = Math.sin(interp * theta) / sinT;
+      boneNode.quaternion.set(_q0.x * a + _q1.x * b, _q0.y * a + _q1.y * b, _q0.z * a + _q1.z * b, _q0.w * a + _q1.w * b);
+    }
     if (isRoot) {
-      // VMD センター position: x=left/right, y=up/down, z=forward/back
-      // Three.js: x=right, y=up, z=negative forward
       _v3.lerpVectors(
         new THREE.Vector3(-kf0.position[0], kf0.position[1], kf0.position[2]),
-        new THREE.Vector3(-kf1.position[0], kf1.position[1], kf1.position[2]),
-        interp
-      );
+        new THREE.Vector3(-kf1.position[0], kf1.position[1], kf1.position[2]), interp);
       boneNode.position.copy(_v3);
     }
   });
-
-  // Apply morphs (blendshapes)
-  const exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
-  if (exprMgr) {
-    // Reset all expression weights
-    const presetNames = ['aa','ih','ou','ee','oh','blink','blinkLeft','blinkRight',
-      'relaxed','sad','angry','happy','a','i','u','e','o','blink_l','blink_r',
-      'fun','sorrow','joy'];
-    presetNames.forEach(name => {
-      try { exprMgr.setValue(name, 0); } catch (e) {}
-    });
-
-    // Apply VMD morphs
-    animMorphs.forEach(({ track, vrmName }) => {
-      const length = track.length;
-      if (frame < track[0].frame) {
-        exprMgr.setValue(vrmName, track[0].weight);
-        return;
-      }
-      if (frame >= track[length - 1].frame) {
-        exprMgr.setValue(vrmName, track[length - 1].weight);
-        return;
-      }
-
-      let lo = 0, hi = length - 1;
-      while (hi - lo > 1) {
-        const mid = (lo + hi) >> 1;
-        if (track[mid].frame <= frame) lo = mid;
-        else hi = mid;
-      }
-      const kf0 = track[lo], kf1 = track[hi];
-      const interp = (kf1.frame === kf0.frame) ? 0 : (frame - kf0.frame) / (kf1.frame - kf0.frame);
-      const weight = kf0.weight + (kf1.weight - kf0.weight) * interp;
-      exprMgr.setValue(vrmName, Math.max(0, Math.min(1, weight)));
-    });
-  }
 }
 
-// ─── Playback ─────────────────────────────────────────────
-
-let lastAnimFrame = -1;
+// ─── Playback ─────────────────────────────────────────
 
 function startPlayback() {
   if (!vmdData || !vrm) return;
   clock.start();
   animTime = 0;
-  lastAnimFrame = -1;
   isPlaying = true;
-
-  // Audio
-  if (isAudioInitialized && audioBuffer && !sourceNode) {
+  if (isAudioReady && audioBuffer) {
     sourceNode = audioCtx.createBufferSource();
     sourceNode.buffer = audioBuffer;
     sourceNode.connect(gainNode);
@@ -900,150 +458,70 @@ function startPlayback() {
     audioStartTime = audioCtx.currentTime;
     audioPauseOffset = 0;
   }
-
   btnPlay.textContent = '⏸';
 }
 
-function pausePlayback() {
-  isPlaying = false;
-  if (sourceNode) {
-    audioPauseOffset = audioCtx.currentTime - audioStartTime;
-    try { sourceNode.stop(); } catch (e) {}
-    sourceNode = null;
-  }
-  btnPlay.textContent = '▶';
-}
-
-function stopPlayback() {
-  isPlaying = false;
-  if (sourceNode) {
-    try { sourceNode.stop(); } catch (e) {}
-    sourceNode = null;
-  }
-  audioPauseOffset = 0;
-  animTime = 0;
-  lastAnimFrame = -1;
-  btnPlay.textContent = '▶';
-}
-
-// ─── Animation Loop ───────────────────────────────────────
-
 function animate() {
   requestAnimationFrame(animate);
-
   const dt = clock.getDelta();
-
   if (isPlaying && vmdData) {
     animTime += dt;
-
-    // Limit to VMD duration
     const maxTime = vmdData.totalFrames / VMD_FPS;
     if (animTime >= maxTime) {
       animTime = 0;
-      // Reset audio
-      if (sourceNode) {
-        try { sourceNode.stop(); } catch (e) {}
-        sourceNode = null;
-      }
-      if (isAudioInitialized && audioBuffer) {
+      if (sourceNode) { try { sourceNode.stop(); } catch(e) {} sourceNode = null; }
+      if (isAudioReady && audioBuffer) {
         sourceNode = audioCtx.createBufferSource();
         sourceNode.buffer = audioBuffer;
         sourceNode.connect(gainNode);
         sourceNode.start(0);
         audioStartTime = audioCtx.currentTime;
-        audioPauseOffset = 0;
       }
     }
-
-    // Compute VMD frame (with fractional part for smooth interpolation)
-    const vmdFrame = animTime * VMD_FPS;
-    applyVMDAtFrame(vmdFrame);
-
-    // Update UI
-    const cur = Math.floor(animTime);
-    const max = Math.floor(maxTime);
-    timeDisplay.textContent =
-      `${Math.floor(cur / 60)}:${String(cur % 60).padStart(2, '0')} / ` +
-      `${Math.floor(max / 60)}:${String(max % 60).padStart(2, '0')}`;
+    applyVMDAtFrame(animTime * VMD_FPS);
+    const cur = Math.floor(animTime), max = Math.floor(maxTime);
+    timeDisplay.textContent = `${Math.floor(cur/60)}:${String(cur%60).padStart(2,'0')} / ${Math.floor(max/60)}:${String(max%60).padStart(2,'0')}`;
   }
-
-  // Update VRM
   if (vrm) vrm.update(dt);
-
   controls.update();
   renderer.render(scene, camera);
 }
 
-// ─── Resize ───────────────────────────────────────────────
-
-window.addEventListener('resize', () => {
-  const w = window.innerWidth, h = window.innerHeight;
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-  renderer.setSize(w, h);
-});
-
-// ─── Play Button ──────────────────────────────────────────
+// ─── Play Button ──────────────────────────────────────
 
 btnPlay.addEventListener('click', async () => {
-  if (audioCtx && audioCtx.state === 'suspended') {
-    await audioCtx.resume();
-  }
+  if (audioCtx && audioCtx.state === 'suspended') await audioCtx.resume();
   if (isPlaying) {
-    pausePlayback();
+    isPlaying = false;
+    if (sourceNode) { try { sourceNode.stop(); } catch(e) {} sourceNode = null; }
+    btnPlay.textContent = '▶';
   } else {
-    // If animation ended (looped or stopped), restart from beginning
-    if (animTime <= 0 || !sourceNode) {
-      startPlayback();
-    } else {
-      // Resume
-      isPlaying = true;
-      if (isAudioInitialized && audioBuffer && !sourceNode) {
-        sourceNode = audioCtx.createBufferSource();
-        sourceNode.buffer = audioBuffer;
-        sourceNode.connect(gainNode);
-        sourceNode.start(0, audioPauseOffset);
-        audioStartTime = audioCtx.currentTime - audioPauseOffset;
-      }
-      btnPlay.textContent = '⏸';
-    }
+    startPlayback();
   }
 });
 
-// ─── Drag & Drop (hot-swap VRM/VMD) ───────────────────────
+// ─── Resize ───────────────────────────────────────────
 
-document.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
-document.addEventListener('dragleave', () => { dropzone.classList.remove('drag-over'); });
-document.addEventListener('drop', async (e) => {
-  e.preventDefault();
-  dropzone.classList.remove('drag-over');
-  // File drop handling skipped for mobile focus
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ─── Init ─────────────────────────────────────────────────
+// ─── Init ─────────────────────────────────────────────
 
 async function init() {
   try {
     await loadVRM();
     await loadVMD();
-    setupAnimationTracks();
-
-    if (animBones.length === 0) {
-      dbg('⚠️ No mapped bones! VMD bone names: ' + (vmdData ? Object.keys(vmdData._boneTracks || {}).join(', ') : 'no vmdData'));
-    } else {
-      dbg(`Setup OK: ${animBones.length} bones, ${animMorphs.length} morphs`);
-    }
-
+    setupAnimation();
     await loadAudio();
     animate();
-
-    // Auto-start after a brief delay
-    setTimeout(() => {
-      if (!isPlaying) startPlayback();
-    }, 1000);
+    // Auto-start
+    setTimeout(startPlayback, 1500);
   } catch (err) {
-    console.error('Init error:', err);
     statusText.textContent = '❌ 加载失败: ' + err.message;
+    console.error(err);
   }
 }
 
