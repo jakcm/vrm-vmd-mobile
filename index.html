@@ -150,8 +150,12 @@ scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 const dirLight = new THREE.DirectionalLight(0xffffff, 3.0);
 dirLight.position.set(1, 1, 1).normalize();
 scene.add(dirLight);
-scene.add(new THREE.DirectionalLight(0x8888ff, 0.5).position.set(-1, 0.5, -1).normalize());
-scene.add(new THREE.DirectionalLight(0xff8888, 0.3).position.set(0, -1, 0.5).normalize());
+const fill1 = new THREE.DirectionalLight(0x8888ff, 0.5);
+fill1.position.set(-1, 0.5, -1).normalize();
+scene.add(fill1);
+const fill2 = new THREE.DirectionalLight(0xff8888, 0.3);
+fill2.position.set(0, -1, 0.5).normalize();
+scene.add(fill2);
 
 const grid = new THREE.GridHelper(10, 10, 0x444466, 0x333355);
 grid.position.y = 0;
