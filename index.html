@@ -407,10 +407,30 @@ async function loadVMD() {
     dbg(`VMD motion[0] values: ${JSON.stringify(kf).substring(0,200)}`);
   }
 
-  // Normalize: use 'bones' internally regardless of CDN version naming
+  // Normalize: unify property names and bone naming
+  // CDN version uses {boneName, frameNum} vs local {name, frame}
   if (!vmdData.bones && vmdData.motions) {
     vmdData.bones = vmdData.motions;
-    dbg(`⚠️ Normalized: vmdData.motions → vmdData.bones (${vmdData.bones.length} items)`);
+    dbg(`Normalized: vmdData.motions → vmdData.bones (${vmdData.bones.length} items)`);
+  }
+
+  // Normalize property names: boneName→name, frameNum→frame
+  let renamedCount = 0;
+  if (vmdData.bones && vmdData.bones.length > 0) {
+    vmdData.bones.forEach(kf => {
+      if (kf.boneName !== undefined && kf.name === undefined) {
+        kf.name = kf.boneName;
+        renamedCount++;
+      }
+      if (kf.frameNum !== undefined && kf.frame === undefined) {
+        kf.frame = kf.frameNum;
+      }
+    });
+    if (renamedCount > 0) dbg(`Normalized: boneName→name (${renamedCount} items)`);
+
+    // Get unique bone names
+    const boneNames = [...new Set(vmdData.bones.map(kf => kf.name))].filter(Boolean);
+    dbg(`VMD unique bone names (${boneNames.length}): ${boneNames.slice(0,20).join(', ')}`);
   }
 
   // Sort keyframes by bone name and frame number
