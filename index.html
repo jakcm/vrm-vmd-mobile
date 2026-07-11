@@ -137,12 +137,21 @@ canvas { touch-action: none; display: block; }
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
 </div>
 
+<!-- Debug overlay -->
+<div id="debugOverlay" style="position:fixed;top:50px;left:10px;z-index:200;background:rgba(0,0,0,0.7);color:#0f0;font-size:11px;padding:8px 12px;border-radius:6px;font-family:monospace;white-space:pre;pointer-events:none;max-width:400px;max-height:200px;overflow:auto;">init...</div>
+
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
+
+const $debug = document.getElementById('debugOverlay');
+function dbg(msg) { 
+  $debug.textContent += '\n' + msg;
+  console.log(msg);
+}
 
 // ─── Configuration ──────────────────────────────────────
 
@@ -359,10 +368,11 @@ async function loadVRM() {
   // Debug: check scene
   let meshCount = 0;
   vrmScene.traverse(c => { if (c.isMesh) meshCount++; });
-  console.log(`[DEBUG] VRM loaded: ${meshCount} meshes, children: ${vrmScene.children.length}`);
-  console.log(`[DEBUG] VRM scene scale:`, vrmScene.scale);
-  console.log(`[DEBUG] VRM meta:`, vrm.meta);
-  console.log(`[DEBUG] VRM humanoid bones:`, Object.keys(vrm.humanoid?.humanBones || {}).join(', '));
+  dbg(`VRM loaded: ${meshCount} meshes, children: ${vrmScene.children.length}`);
+  dbg(`VRM scene scale: ${vrmScene.scale.toArray().join(',')}`);
+  dbg(`VRM meta version: ${vrm.meta?.metaVersion || 'unknown'}`);
+  const vrmBones = Object.keys(vrm.humanoid?.humanBones || {});
+  dbg(`VRM humanoid bones: ${vrmBones.join(', ')}`);
 
   setProgress(55, `VRM 模型加载完成 (${meshCount} 网格)`);
 }
@@ -550,7 +560,7 @@ function setupAnimationTracks() {
   const isVRM1 = vrm.meta && parseInt(vrm.meta.metaVersion) > 0;
   const morphMap = isVRM1 ? morphMapMMDToVRM1 : morphMapMMDToVRM0;
 
-  console.log(`[DEBUG] VRM version: ${isVRM1 ? '1.x' : '0.x'}`);
+  dbg(`VRM version: ${isVRM1 ? '1.x' : '0.x'}`);
 
   animBones = [];
   for (const mmdName in boneMapMMDToVRM) {
@@ -572,14 +582,22 @@ function setupAnimationTracks() {
     });
   }
 
-  console.log(`[DEBUG] Mapped ${animBones.length} bones:`);
-  animBones.forEach(b => console.log(`  ${b.mmdName} → ${b.vrmName} (${b.track.length} keyframes)`));
+  dbg(`Mapped ${animBones.length} bones from VMD to VRM`);
+  // Log first 10 mapped bones
+  let boneLog = '';
+  animBones.slice(0,10).forEach(b => { boneLog += `\n  ${b.mmdName}→${b.vrmName}(${b.track.length}kf)`; });
+  if (animBones.length > 10) boneLog += `\n  ... and ${animBones.length-10} more`;
+  dbg(boneLog);
 
   // Log unmapped VMD bones
+  const unmappedBones = [];
   for (const mmdName in vmdData._boneTracks) {
     if (!boneMapMMDToVRM[mmdName]) {
-      console.warn(`[DEBUG] Unmapped VMD bone: "${mmdName}"`);
+      unmappedBones.push(mmdName);
     }
+  }
+  if (unmappedBones.length > 0) {
+    dbg(`⚠️ Unmapped VMD bones (${unmappedBones.length}): ${unmappedBones.slice(0,20).join(', ')}`);
   }
 
   // Morph mapping
@@ -610,7 +628,7 @@ function applyVMDAtFrame(frame) {
   // Debug first frame
   const frameInt = Math.floor(frame);
   if (frameInt % 300 === 0 || animBones.length === 0) {
-    console.log(`[DEBUG] applyVMDAtFrame frame=${frame.toFixed(1)}, animBones=${animBones.length}, animMorphs=${animMorphs.length}`);
+    dbg(`applyVMDAtFrame frame=${frame.toFixed(1)}, bones=${animBones.length}, morphs=${animMorphs.length}`);
   }
 
   // Apply bone transforms
@@ -854,9 +872,9 @@ async function init() {
     setupAnimationTracks();
 
     if (animBones.length === 0) {
-      console.warn('No mapped bones found! VMD bone names:', Object.keys(vmdData._boneTracks || {}));
+      dbg('⚠️ No mapped bones! VMD bone names: ' + (vmdData ? Object.keys(vmdData._boneTracks || {}).join(', ') : 'no vmdData'));
     } else {
-      console.log(`Mapped ${animBones.length} bones, ${animMorphs.length} morphs`);
+      dbg(`Setup OK: ${animBones.length} bones, ${animMorphs.length} morphs`);
     }
 
     await loadAudio();
