@@ -396,12 +396,19 @@ async function loadVMD() {
 
     // Debug: check raw VMD structure
   dbg(`Raw VMD: keys=${Object.keys(vmdData).join(', ')}`);
-  dbg(`VMD bones=${vmdData.bones?.length || 0}, morphs=${vmdData.morphs?.length || 0}, camera=${vmdData.camera?.length || 0}`);
+  const boneKey = vmdData.motions ? 'motions' : (vmdData.bones ? 'bones' : null);
+  dbg(`VMD boneKey="${boneKey}", count=${vmdData[boneKey]?.length || 0}, morphs=${vmdData.morphs?.length || 0}, camera=${vmdData.camera?.length || 0}`);
 
-  // Show first 3 bone names if any
-  if (vmdData.bones && vmdData.bones.length > 0) {
-    const firstBones = vmdData.bones.slice(0, 5).map(kf => `${kf.name}@${kf.frame}`);
-    dbg(`First VMD bones: ${firstBones.join(', ')}`);
+  // Show first 3 motion names if any
+  if (boneKey && vmdData[boneKey] && vmdData[boneKey].length > 0) {
+    const firstMotions = vmdData[boneKey].slice(0, 5).map(kf => `${kf.name}@${kf.frame}`);
+    dbg(`First VMD motions: ${firstMotions.join(', ')}`);
+  }
+
+  // Normalize: use 'bones' internally regardless of CDN version naming
+  if (!vmdData.bones && vmdData.motions) {
+    vmdData.bones = vmdData.motions;
+    dbg(`⚠️ Normalized: vmdData.motions → vmdData.bones (${vmdData.bones.length} items)`);
   }
 
   // Sort keyframes by bone name and frame number
