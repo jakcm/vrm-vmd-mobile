@@ -416,21 +416,46 @@ async function loadVRM() {
       mats.forEach((m, i) => {
         if (m.type === 'ShaderMaterial') {
           let map = null;
-          let color = new THREE.Color(0xFFCCDD);
+          let color = new THREE.Color(0xFF88AA);
+          // Try to extract main texture from MToon shader uniforms
           try {
             if (m.uniforms && m.uniforms._MainTex && m.uniforms._MainTex.value) {
-              map = m.uniforms._MainTex.value;
+              const tex = m.uniforms._MainTex.value;
+              if (tex && tex.image && (tex.image.width > 0 || tex.image.naturalWidth > 0)) {
+                map = tex;
+              }
             }
             if (m.uniforms && m.uniforms._Color && m.uniforms._Color.value) {
               color.copy(m.uniforms._Color.value);
             }
           } catch(e) {}
+          // Check if _ShadeTexture exists for additional detail
+          let shadeMap = null;
+          try {
+            if (m.uniforms && m.uniforms._ShadeTexture && m.uniforms._ShadeTexture.value) {
+              shadeMap = m.uniforms._ShadeTexture.value;
+            }
+          } catch(e) {}
+          // Use emissive map for extra visibility  
+          let emitMap = null;
+          let emitColor = new THREE.Color(0x000000);
+          try {
+            if (m.uniforms && m.uniforms._EmissionMap && m.uniforms._EmissionMap.value) {
+              emitMap = m.uniforms._EmissionMap.value;
+            }
+            if (m.uniforms && m.uniforms._EmissionColor && m.uniforms._EmissionColor.value) {
+              emitColor.copy(m.uniforms._EmissionColor.value);
+            }
+          } catch(e) {}
           const newMat = new THREE.MeshStandardMaterial({
             color: color,
-            map: map,
+            map: map || undefined,
             roughness: 0.5,
             metalness: 0.0,
             side: THREE.DoubleSide,
+            emissive: emitColor,
+            emissiveMap: emitMap || undefined,
+            emissiveIntensity: 0.3,
             transparent: m.transparent,
             opacity: Math.max(m.opacity || 1, 0.01),
             depthWrite: true,
