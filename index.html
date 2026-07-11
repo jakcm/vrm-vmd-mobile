@@ -11,7 +11,8 @@
     "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/",
     "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
-    "@pixiv/three-vrm-core": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-core@2.1.0/lib/three-vrm-core.module.js"
+    "@pixiv/three-vrm-core": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-core@2.1.0/lib/three-vrm-core.module.js",
+    "@pixiv/three-vrm-materials-mtoon": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-materials-mtoon@2.1.0/lib/three-vrm-materials-mtoon.module.js"
   }
 }
 </script>
@@ -119,6 +120,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
+import { MToonMaterialLoaderPlugin } from '@pixiv/three-vrm-materials-mtoon';
 
 // ─── Config ──────────────────────────────────────────
 
@@ -227,6 +229,7 @@ async function loadVRM() {
   setProgress(10, '加载 VRM 模型...');
   const loader = new GLTFLoader();
   loader.register(parser => new THREEVRM.VRMLoaderPlugin(parser));
+  loader.register(parser => new MToonMaterialLoaderPlugin(parser));
 
   const gltf = await new Promise((resolve, reject) => {
     loader.load(cfg.modelPath, resolve, xhr => {
@@ -249,49 +252,6 @@ async function loadVRM() {
       child.receiveShadow = true;
       child.frustumCulled = false;
     }
-  });
-
-  // Convert MToon ShaderMaterials to StandardMaterials for visibility
-  vrmScene.traverse(child => {
-    if (!child.isMesh || !child.material) return;
-    const mats = Array.isArray(child.material) ? child.material : [child.material];
-    mats.forEach((m, i) => {
-      if (m.type !== 'ShaderMaterial') return;
-      // Dump material info for debugging
-      let uniformNames = m.uniforms ? Object.keys(m.uniforms).join(',') : 'NO UNIFORMS';
-      console.log('MToon mesh:', child.name || 'unnamed', 'uniforms:', uniformNames);
-      
-      let map = null, color = new THREE.Color(0xFFCCDD);
-      // VRM 0.x MToon uses MToonMaterial uniforms: _MainTex, _ShadeTexture, etc.
-      try {
-        if (m.uniforms) {
-          // Try common MToon uniform names for main texture
-          for (const texKey of ['_MainTex', '_mainTex', 'mainTex', 'map']) {
-            const u = m.uniforms[texKey];
-            if (u && u.value && u.value.image && (u.value.image.width > 0 || u.value.image.naturalWidth > 0)) {
-              map = u.value; break;
-            }
-          }
-          // Color
-          for (const colKey of ['_Color', '_color', 'color']) {
-            if (m.uniforms[colKey] && m.uniforms[colKey].value) {
-              const v = m.uniforms[colKey].value;
-              if (v.isColor) color.copy(v);
-              else if (Array.isArray(v)) color.setRGB(v[0], v[1], v[2]);
-              break;
-            }
-          }
-        }
-      } catch(e) { console.warn('Material conversion error:', e); }
-      
-      const nm = new THREE.MeshStandardMaterial({
-        color, map: map || undefined, roughness: 0.5, metalness: 0,
-        side: THREE.DoubleSide, transparent: m.transparent, opacity: Math.max(m.opacity || 1, 0.01),
-        depthWrite: true, depthTest: true,
-      });
-      if (Array.isArray(child.material)) child.material[i] = nm;
-      else child.material = nm;
-    });
   });
 
   scene.add(vrmScene);
