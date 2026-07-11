@@ -11,6 +11,7 @@
     "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/",
     "three/addons/loaders/MMDLoader.js": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/loaders/MMDLoader.js",
+    "three/addons/animation/MMDAnimationHelper.js": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/animation/MMDAnimationHelper.js",
     "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
     "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3/lib/three-vrm-animation.module.min.js"
   }
@@ -45,7 +46,7 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-<div id="ver">v20260711.033000</div>
+<div id="ver">v20260711.090627</div>
 <div id="controls">
   <select id="danceSelect" aria-label="选择舞蹈">
     <option value="jiuzui">酒醉的蝴蝶</option>
@@ -61,7 +62,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation';
 import { Parser } from './libs/mmdparser.module.js';
-import { vmdToBVH } from './libs/VMD_to_BVH.js?rev=20260711.031500';
+import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
+import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
+import { vmdToBVH } from './libs/VMD_to_BVH.js?rev=20260711.034500';
 import { BVHLoader } from './libs/BVHLoader.js';
 import { convertBVHToVRMAnimation } from './libs/convertBVHToVRMAnimation.js';
 
@@ -92,6 +95,11 @@ const dances = {
     title: '默认舞蹈（wavefile）',
     vmdPath: './vmd/default_wavefile_dance.vmd',
     audioPath: './audio/default_wavefile_music.mp3',
+    // Source assistance transfers the solved MMD limb pose. Keep the target
+    // planted; copying MMD stage translation into this scaled VRM caused large
+    // locomotion drift rather than body-weight motion.
+    sourceAssist: true,
+    retarget: { lockHipsTranslation: true, armCorrection: 'xpi', fingerCorrection: 'ypi', includeHipsTranslation: false },
   },
 };
 let selectedDanceKey = 'jiuzui';
@@ -185,9 +193,117 @@ async function loadVRM() {
 }
 
 // ─── VMD → BVH → VRMA (vrm-viewer-mobile conversion pipeline) ──
-// 直接把 MMD 局部四元数塞给 VRM 会遗漏坐标系和 bind-pose 差异，典型症状就是膝盖翻向身后。
-// 这里使用已验证的 VMD→BVH→VRMA 管线，让 createVRMAnimationClip 处理骨骼重定向。
+// 普通 VMD走 VRMA。对于含足IK的默认舞蹈，还会加载一个隐藏的原生 MMD
+// source rig：先由 MMDAnimationHelper 解出 IK/grant，再将最终世界姿态传回 VRM。
 let vmdClip, mixer, action;
+let sourceRig=null;
+const SOURCE_MODEL_PATH='./models/mmd-reference-miku.pmd';
+const SOURCE_MMD_BY_TARGET={
+  hips:'下半身', spine:'上半身', neck:'首', head:'頭',
+  leftShoulder:'左肩', leftUpperArm:'左腕', leftLowerArm:'左ひじ', leftHand:'左手首',
+  rightShoulder:'右肩', rightUpperArm:'右腕', rightLowerArm:'右ひじ', rightHand:'右手首',
+  leftUpperLeg:'左足', leftLowerLeg:'左ひざ', leftFoot:'左足首', leftToes:'左つま先',
+  rightUpperLeg:'右足', rightLowerLeg:'右ひざ', rightFoot:'右足首', rightToes:'右つま先',
+  leftThumbProximal:'左親指１', leftThumbDistal:'左親指２',
+  rightThumbProximal:'右親指１', rightThumbDistal:'右親指２',
+  leftIndexProximal:'左人指１', leftIndexIntermediate:'左人指２', leftIndexDistal:'左人指３',
+  rightIndexProximal:'右人指１', rightIndexIntermediate:'右人指２', rightIndexDistal:'右人指３',
+  leftMiddleProximal:'左中指１', leftMiddleIntermediate:'左中指２', leftMiddleDistal:'左中指３',
+  rightMiddleProximal:'右中指１', rightMiddleIntermediate:'右中指２', rightMiddleDistal:'右中指３',
+  leftRingProximal:'左薬指１', leftRingIntermediate:'左薬指２', leftRingDistal:'左薬指３',
+  rightRingProximal:'右薬指１', rightRingIntermediate:'右薬指２', rightRingDistal:'右薬指３',
+  leftLittleProximal:'左小指１', leftLittleIntermediate:'左小指２', leftLittleDistal:'左小指３',
+  rightLittleProximal:'右小指１', rightLittleIntermediate:'右小指２', rightLittleDistal:'右小指３',
+};
+const SOURCE_APPLY_ORDER=[
+  // Keep VRMA's root/spine layer: MMD センター/下半身 has a different parent
+  // semantic. Source assistance only replaces the limbs that need MMD IK/grant.
+  'leftShoulder','leftUpperArm','leftLowerArm','leftHand',
+  'rightShoulder','rightUpperArm','rightLowerArm','rightHand',
+  'leftUpperLeg','leftLowerLeg','leftFoot','leftToes',
+  'rightUpperLeg','rightLowerLeg','rightFoot','rightToes',
+  'leftThumbProximal','leftThumbDistal','rightThumbProximal','rightThumbDistal',
+  'leftIndexProximal','leftIndexIntermediate','leftIndexDistal','rightIndexProximal','rightIndexIntermediate','rightIndexDistal',
+  'leftMiddleProximal','leftMiddleIntermediate','leftMiddleDistal','rightMiddleProximal','rightMiddleIntermediate','rightMiddleDistal',
+  'leftRingProximal','leftRingIntermediate','leftRingDistal','rightRingProximal','rightRingIntermediate','rightRingDistal',
+  'leftLittleProximal','leftLittleIntermediate','leftLittleDistal','rightLittleProximal','rightLittleIntermediate','rightLittleDistal',
+];
+
+function patchMmdSourceLoader(loader){
+  const builder=loader.meshBuilder, original=builder.build.bind(builder);
+  builder.build=function(data,...args){
+    if(data.metadata){data.metadata.rigidBodyCount=0;data.metadata.constraintCount=0;}
+    for(const morph of data.morphs??[]){
+      if(!morph?.elements) continue;
+      if(morph.elementCount>morph.elements.length) morph.elementCount=morph.elements.length;
+      if(data.metadata?.format==='pmx'&&morph.type===0){morph.elements=morph.elements.filter(e=>e.index>=0&&e.index<data.morphs.length);morph.elementCount=morph.elements.length;}
+      if(data.metadata?.format==='pmd'&&morph.type===0) morph.type=1;
+    }
+    return original(data,...args);
+  };
+}
+
+async function createSourceRig(dance){
+  if(!dance.sourceAssist) return null;
+  const loader=new MMDLoader(); patchMmdSourceLoader(loader);
+  const mesh=await new Promise((res,rej)=>loader.load(SOURCE_MODEL_PATH,res,undefined,rej));
+  const animation=await new Promise((res,rej)=>loader.loadAnimation(dance.vmdPath,mesh,res,undefined,rej));
+  const helper=new MMDAnimationHelper({afterglow:0});
+  helper.add(mesh,{animation,physics:false,ik:true,grant:true});
+  const mixer=helper.objects.get(mesh).mixer;
+  mesh.updateWorldMatrix(true,true);
+  const byName=mesh.skeleton.bones.reduce((map,b)=>(map.set(b.name,b),map),new Map());
+  const sourceRest=new Map(), targetRest=new Map();
+  for(const targetName of SOURCE_APPLY_ORDER){
+    const source=byName.get(SOURCE_MMD_BY_TARGET[targetName]);
+    const target=vrm.humanoid.getRawBoneNode(targetName);
+    if(!source||!target) continue;
+    sourceRest.set(targetName,source.getWorldQuaternion(new THREE.Quaternion()));
+    targetRest.set(targetName,target.getWorldQuaternion(new THREE.Quaternion()));
+  }
+  const rig={mesh,helper,mixer,byName,sourceRest,targetRest,duration:animation.duration};
+  window.__sourceMmdRigDebug=rig;
+  return rig;
+}
+
+const _sourceQ0=new THREE.Quaternion(),_sourceQ1=new THREE.Quaternion(),_sourceQ2=new THREE.Quaternion(),_sourceQ3=new THREE.Quaternion(),_sourceQ4=new THREE.Quaternion();
+const _sourceV0=new THREE.Vector3(),_sourceV1=new THREE.Vector3(),_sourceV2=new THREE.Vector3();
+const _sourceArmFlip=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),Math.PI);
+const _sourceFingerFlip=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI);
+const SOURCE_DIRECTION_CHAINS=[
+  ['leftShoulder','leftUpperArm'],['leftUpperArm','leftLowerArm'],['leftLowerArm','leftHand'],
+  ['rightShoulder','rightUpperArm'],['rightUpperArm','rightLowerArm'],['rightLowerArm','rightHand'],
+  ['leftUpperLeg','leftLowerLeg'],['leftLowerLeg','leftFoot'],['leftFoot','leftToes'],
+  ['rightUpperLeg','rightLowerLeg'],['rightLowerLeg','rightFoot'],['rightFoot','rightToes'],
+  ['leftIndexProximal','leftIndexIntermediate'],['leftIndexIntermediate','leftIndexDistal'],
+  ['rightIndexProximal','rightIndexIntermediate'],['rightIndexIntermediate','rightIndexDistal'],
+];
+function applySourcePoseCorrection(time){
+  if(!sourceRig||!vrm) return;
+  sourceRig.mixer.setTime(THREE.MathUtils.euclideanModulo(time,sourceRig.duration));
+  sourceRig.helper.update(0);
+  sourceRig.mesh.updateWorldMatrix(true,true);
+  const sourceHipWorld=sourceRig.byName.get('下半身')?.getWorldPosition(_sourceV0);
+  const targetHip=vrm.humanoid.getRawBoneNode('hips');
+  if(!sourceHipWorld||!targetHip) return;
+  const sourceHipQ=sourceRig.byName.get('下半身').getWorldQuaternion(_sourceQ0);
+  const targetHipQ=targetHip.getWorldQuaternion(_sourceQ1);
+  // Rebuild each target limb by its MMD post-IK bone direction in hips-local
+  // space. This is bind-axis independent and works for arms, fingers and legs.
+  for(const [parentName,childName] of SOURCE_DIRECTION_CHAINS){
+    const sourceParent=sourceRig.byName.get(SOURCE_MMD_BY_TARGET[parentName]);
+    const sourceChild=sourceRig.byName.get(SOURCE_MMD_BY_TARGET[childName]);
+    const targetParent=vrm.humanoid.getRawBoneNode(parentName);
+    const targetChild=vrm.humanoid.getRawBoneNode(childName);
+    if(!sourceParent||!sourceChild||!targetParent||!targetChild) continue;
+    const desired=_sourceV1.copy(sourceChild.getWorldPosition(_sourceV2)).sub(sourceParent.getWorldPosition(_sourceV0)).applyQuaternion(_sourceQ3.copy(sourceHipQ).invert()).normalize().applyQuaternion(targetHipQ);
+    const current=targetChild.getWorldPosition(_sourceV2).sub(targetParent.getWorldPosition(_sourceV0)).normalize();
+    const delta=_sourceQ2.setFromUnitVectors(current,desired);
+    const parentWorld=targetParent.parent.getWorldQuaternion(_sourceQ3);
+    targetParent.quaternion.premultiply(_sourceQ4.copy(parentWorld).invert().multiply(delta).multiply(parentWorld));
+    targetParent.updateWorldMatrix(false,true);
+  }
+}
 
 async function loadVMD(dance) {
   setProgress(55,`解析并转换：${dance.title}...`);
@@ -199,13 +315,16 @@ async function loadVMD(dance) {
   const parser=new Parser();
   const vmd=parser.parseVmd(buffer);
   // 使用与 vrm-viewer-mobile 一致的标准 VRM 骨架转换，避免膝盖/手臂轴向翻转。
-  const bvhText=vmdToBVH(vmd,vrm,{fps:30,scale:0.1});
+  const query=new URLSearchParams(location.search);
+  const armCorrection=query.get('armCorrection') ?? dance.retarget?.armCorrection;
+  const fingerCorrection=query.get('fingerCorrection') ?? dance.retarget?.fingerCorrection;
+  const bvhText=vmdToBVH(vmd,vrm,{fps:30,scale:0.1,...(dance.retarget ?? {}), ...(armCorrection ? { armCorrection } : {}), ...(fingerCorrection ? { fingerCorrection } : {})});
   const bvh=new BVHLoader().parse(bvhText);
   setProgress(73,'BVH → VRMA 动画...');
   // Fixed-camera dance mode: omit the hips translation track from the exported
   // VRMA completely. A constant/zero track is still normalized by three-vrm;
   // no track is the only unambiguous way to keep the avatar planted.
-  const vrmaBuffer=await convertBVHToVRMAnimation(bvh,{scale:0.01,includeHipsTranslation:false});
+  const vrmaBuffer=await convertBVHToVRMAnimation(bvh,{scale:0.01,includeHipsTranslation:dance.retarget?.includeHipsTranslation ?? false});
 
   const animationLoader=new GLTFLoader();
   animationLoader.register(p=>new VRMAnimationLoaderPlugin(p));
@@ -234,9 +353,12 @@ async function loadVMD(dance) {
       probe.play();
       probe.time = THREE.MathUtils.euclideanModulo(seconds, vmdClip.duration);
       mixer.update(0);
+      applySourcePoseCorrection(probe.time);
       vrm.update(0);
       vrm.scene.updateWorldMatrix(true, true);
-      const point = (boneName) => vrm.humanoid.getRawBoneNode(boneName).getWorldPosition(new THREE.Vector3()).toArray();
+      const bone = (boneName) => vrm.humanoid.getRawBoneNode(boneName);
+      const point = (boneName) => bone(boneName).getWorldPosition(new THREE.Vector3()).toArray();
+      const rotation = (boneName) => bone(boneName).getWorldQuaternion(new THREE.Quaternion()).toArray();
       const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(vrm.scene.getWorldQuaternion(new THREE.Quaternion())).normalize().toArray();
       probe.time = previousTime;
       probe.paused = wasPaused;
@@ -246,16 +368,25 @@ async function loadVMD(dance) {
         forward,
         left: {
           hip: point('leftUpperLeg'), knee: point('leftLowerLeg'), ankle: point('leftFoot'),
-          shoulder: point('leftShoulder'), elbow: point('leftLowerArm'), wrist: point('leftHand'),
+          shoulder: point('leftShoulder'), upperArm: point('leftUpperArm'), elbow: point('leftLowerArm'), wrist: point('leftHand'),
           index: { proximal: point('leftIndexProximal'), intermediate: point('leftIndexIntermediate'), distal: point('leftIndexDistal') },
           middle: { proximal: point('leftMiddleProximal'), intermediate: point('leftMiddleIntermediate'), distal: point('leftMiddleDistal') },
         },
         right: {
           hip: point('rightUpperLeg'), knee: point('rightLowerLeg'), ankle: point('rightFoot'),
-          shoulder: point('rightShoulder'), elbow: point('rightLowerArm'), wrist: point('rightHand'),
+          shoulder: point('rightShoulder'), upperArm: point('rightUpperArm'), elbow: point('rightLowerArm'), wrist: point('rightHand'),
           index: { proximal: point('rightIndexProximal'), intermediate: point('rightIndexIntermediate'), distal: point('rightIndexDistal') },
           middle: { proximal: point('rightMiddleProximal'), intermediate: point('rightMiddleIntermediate'), distal: point('rightMiddleDistal') },
         },
+        rotations: Object.fromEntries([
+          'hips','spine','neck','head',
+          'leftShoulder','leftUpperArm','leftLowerArm','leftHand',
+          'rightShoulder','rightUpperArm','rightLowerArm','rightHand',
+          'leftUpperLeg','leftLowerLeg','leftFoot',
+          'rightUpperLeg','rightLowerLeg','rightFoot',
+          'leftIndexProximal','leftIndexIntermediate','leftIndexDistal',
+          'rightIndexProximal','rightIndexIntermediate','rightIndexDistal',
+        ].map((name) => [name, rotation(name)])),
       };
     },
     sampleClipTracksAt: (seconds) => {
@@ -336,14 +467,16 @@ async function loadDance(key, { autoplay = false, initial = false } = {}) {
   pausePlayback();
   if(action){ action.stop(); action=null; }
   if(mixer){ mixer.stopAllAction(); mixer.uncacheRoot(vrm.scene); }
-  mixer=null; vmdClip=null; audioBuffer=null; isAudioReady=false;
+  mixer=null; vmdClip=null; sourceRig=null; window.__sourceMmdRigDebug=null; audioBuffer=null; isAudioReady=false;
   try {
     await loadVMD(dance);
+    sourceRig=await createSourceRig(dance);
     await loadAudio(dance);
     selectedDanceKey=key;
     danceSelect.value=key;
     infoEl.textContent=`🐱 猫女郎 · ${dance.title}`;
     if(initial){ setProgress(100,'加载完成 ✓'); setTimeout(()=>loadingEl.classList.add('hidden'),500); }
+    else statusText.textContent=`✓ 已切换：${dance.title}`;
     // Release the loading gate before autoplaying the fresh action.
     danceLoading=false;
     if(autoplay || wasPlaying) startPlayback();
@@ -361,7 +494,13 @@ function animate(){
   // then the mixer writes the retargeted humanoid pose for this frame.
   if(vrm) vrm.update(dt);
   // Pausing must freeze the mixer itself; stopping audio alone leaves poses advancing.
-  if(isPlaying&&mixer) mixer.update(dt);
+  if(isPlaying&&mixer) {
+    mixer.update(dt);
+    // For IK-driven MMD dances the raw VMD clip is only a fallback layer.
+    // Apply the native MMD IK/grant result afterwards so mixer cannot overwrite it.
+    applySourcePoseCorrection(action?.time ?? 0);
+    vrm.update(0);
+  }
   if(isPlaying&&vmdClip){
     const elapsed=action?.time||0;
     const total=vmdClip.duration;

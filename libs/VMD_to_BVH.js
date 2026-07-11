@@ -23,8 +23,12 @@ const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _q = new THREE.Quaternion();
 const _euler = new THREE.Euler();
-const _armAxisFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
-const _fingerAxisFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+const _axisFlips = {
+  none: null,
+  xpi: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI),
+  ypi: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI),
+  zpi: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI),
+};
 
 function getBoneNodes(vrm) {
   const nodes = new Map();
@@ -124,6 +128,12 @@ export function convertMmdRotationToVrm(rotation, metaVersion = '0') {
 
 export function vmdToBVH(vmdData, vrm, options = {}) {
   const fps = options.fps ?? 30;
+  const armCorrection = options.armCorrection ?? 'xpi';
+  const fingerCorrection = options.fingerCorrection ?? 'ypi';
+  const lockHipsTranslation = options.lockHipsTranslation ?? true;
+  const armFlip = _axisFlips[armCorrection];
+  const fingerFlip = _axisFlips[fingerCorrection];
+  if (armFlip === undefined || fingerFlip === undefined) throw new Error('未知的骨骼轴修正选项');
   const nodes = getBoneNodes(vrm);
   const offsets = getOffsets(nodes);
   if (!offsets.has('hips')) throw new Error('VRM 缺少 hips 骨骼，无法重定向 VMD');
@@ -163,12 +173,10 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
         if (rootKey) {
           const phase = totalFrames > 1 ? frame / (totalFrames - 1) : 0;
           const closedRoot = _tmpV.fromArray(rootKey.pos).sub(_rootTemp.fromArray(rootFirst)).sub(_world.copy(rootDrift).multiplyScalar(phase));
-          // This fixed-camera player must not animate hips translation. The VMD
-          // root track represents stage locomotion (including its Y component),
-          // not a safe local-body bob. Keep dance motion in rotations only.
-          closedRoot.x = 0;
-          closedRoot.y = 0;
-          closedRoot.z = 0;
+          // Fixed-camera tracks lock translation for the compact 酒醉 dance.
+          // Other VMDs can retain loop-closed root motion for authentic step and
+          // center-of-mass timing.
+          if (lockHipsTranslation) closedRoot.set(0, 0, 0);
           pos.add(closedRoot.multiplyScalar(rootScale));
         }
         if (parentKey) pos.add(_tmpV.fromArray(parentKey.pos).multiplyScalar(rootScale));
@@ -183,14 +191,10 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
         if (name === 'rightLowerArm' && rightTwist) q.multiply(mmdQuaternion(rightTwist, frame));
       }
       q = convertMmdRotationToVrm(q, metaVersion);
-      // MMD arm chains use the opposite bend basis from the canonical BVH
-      // arm axes. Conjugating by Xπ preserves the motion magnitude while
-      // correcting its up/down and front/back direction for VRMA retargeting.
-      if (/^(left|right)(UpperArm|LowerArm|Hand)$/.test(name)) q.premultiply(_armAxisFlip).multiply(_armAxisFlip);
-      // Finger curl is authored around the MMD hand-local Z axis, while this
-      // canonical VRMA hand skeleton uses the opposite palm normal. Conjugate
-      // by Yπ so a curl closes into the palm rather than through the hand back.
-      if (/^(left|right)(Thumb|Index|Middle|Ring|Little)/.test(name)) q.premultiply(_fingerAxisFlip).multiply(_fingerAxisFlip);
+      // The correction is selectable for golden-pose calibration. Production
+      // defaults preserve the previously verified 酒醉的蝴蝶 behavior.
+      if (armFlip && /^(left|right)(UpperArm|LowerArm|Hand)$/.test(name)) q.premultiply(armFlip).multiply(armFlip);
+      if (fingerFlip && /^(left|right)(Thumb|Index|Middle|Ring|Little)/.test(name)) q.premultiply(fingerFlip).multiply(fingerFlip);
       values.push(...toYxz(q.toArray()).map((v) => v.toFixed(6)));
     }
     lines.push(values.join(' '));
