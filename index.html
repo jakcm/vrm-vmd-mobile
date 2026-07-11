@@ -10,8 +10,7 @@
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/",
-    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
-    "@pixiv/three-vrm-materials-mtoon": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-materials-mtoon@3/lib/three-vrm-materials-mtoon.module.min.js"
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js"
   }
 }
 </script>
@@ -119,7 +118,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
-import { MToonMaterialLoaderPlugin } from '@pixiv/three-vrm-materials-mtoon';
 
 // ─── Config ──────────────────────────────────────────
 
@@ -211,7 +209,6 @@ async function loadVRM() {
   setProgress(10, '加载 VRM 模型...');
   const loader = new GLTFLoader();
   loader.register(parser => new THREEVRM.VRMLoaderPlugin(parser));
-  loader.register(parser => new MToonMaterialLoaderPlugin(parser));
 
   const gltf = await new Promise((resolve, reject) => {
     loader.load(cfg.modelPath, resolve, xhr => {
@@ -240,6 +237,50 @@ async function loadVRM() {
   vrmScene.rotation.y = Math.PI;
 
   scene.add(vrmScene);
+
+  // ── Convert MToon ShaderMaterial to MeshStandardMaterial ──
+  vrmScene.traverse(child => {
+    if (!child.isMesh) return;
+    child.frustumCulled = false;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    mats.forEach((mat, i) => {
+      if (mat.type !== 'ShaderMaterial') return;
+      const newMat = new THREE.MeshStandardMaterial({
+        roughness: 0.85,
+        metalness: 0.0,
+        side: mat.side,
+        transparent: mat.transparent,
+        opacity: mat.opacity,
+        depthWrite: mat.depthWrite ?? true,
+        color: mat.color || 0xffffff,
+      });
+      // Extract MToon main texture from uniforms
+      if (mat.uniforms) {
+        if (mat.uniforms._MainTex?.value) newMat.map = mat.uniforms._MainTex.value;
+        else if (mat.uniforms._ShadeTexture?.value) newMat.map = mat.uniforms._ShadeTexture.value;
+        else if (mat.uniforms._MultiplyTexture?.value) newMat.map = mat.uniforms._MultiplyTexture.value;
+        if (mat.uniforms._Color?.value) newMat.color.copy(mat.uniforms._Color.value);
+        if (mat.uniforms._ShadeColor?.value) newMat.color.lerp(mat.uniforms._ShadeColor.value, 0.5);
+        // Emission
+        if (mat.uniforms._EmissionMap?.value) newMat.emissiveMap = mat.uniforms._EmissionMap.value;
+        if (mat.uniforms._EmissionColor?.value) newMat.emissive.copy(mat.uniforms._EmissionColor.value);
+        // Normal
+        if (mat.uniforms._BumpMap?.value) newMat.normalMap = mat.uniforms._BumpMap.value;
+      }
+      // Fallback: grab map directly from material (some VRM exports put it there)
+      if (!newMat.map && mat.map) newMat.map = mat.map;
+      // Ensure texture is properly configured
+      if (newMat.map) {
+        newMat.map.colorSpace = THREE.SRGBColorSpace;
+        newMat.map.needsUpdate = true;
+      }
+      // Dispose old shader material
+      mat.dispose();
+      if (Array.isArray(child.material)) child.material[i] = newMat;
+      else child.material = newMat;
+    });
+  });
+
   vrm.update(0);
 
   setProgress(55, 'VRM 加载完成');
