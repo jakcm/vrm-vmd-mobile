@@ -399,10 +399,12 @@ async function loadVMD() {
   const boneKey = vmdData.motions ? 'motions' : (vmdData.bones ? 'bones' : null);
   dbg(`VMD boneKey="${boneKey}", count=${vmdData[boneKey]?.length || 0}, morphs=${vmdData.morphs?.length || 0}, camera=${vmdData.camera?.length || 0}`);
 
-  // Show first 3 motion names if any
+  // Check motion keyframe structure
   if (boneKey && vmdData[boneKey] && vmdData[boneKey].length > 0) {
-    const firstMotions = vmdData[boneKey].slice(0, 5).map(kf => `${kf.name}@${kf.frame}`);
-    dbg(`First VMD motions: ${firstMotions.join(', ')}`);
+    const kf = vmdData[boneKey][0];
+    const kfKeys = Object.keys(kf).join(', ');
+    dbg(`VMD motion[0] keys: ${kfKeys}`);
+    dbg(`VMD motion[0] values: ${JSON.stringify(kf).substring(0,200)}`);
   }
 
   // Normalize: use 'bones' internally regardless of CDN version naming
