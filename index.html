@@ -394,6 +394,16 @@ async function loadVMD() {
     }, reject);
   });
 
+    // Debug: check raw VMD structure
+  dbg(`Raw VMD: keys=${Object.keys(vmdData).join(', ')}`);
+  dbg(`VMD bones=${vmdData.bones?.length || 0}, morphs=${vmdData.morphs?.length || 0}, camera=${vmdData.camera?.length || 0}`);
+
+  // Show first 3 bone names if any
+  if (vmdData.bones && vmdData.bones.length > 0) {
+    const firstBones = vmdData.bones.slice(0, 5).map(kf => `${kf.name}@${kf.frame}`);
+    dbg(`First VMD bones: ${firstBones.join(', ')}`);
+  }
+
   // Sort keyframes by bone name and frame number
   const boneTracks = {};
   if (vmdData.bones) {
