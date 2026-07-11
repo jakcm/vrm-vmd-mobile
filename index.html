@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>VRM + VMD Dance</title>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
+    "@pixiv/three-vrm-core": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-core@2.1.0/lib/three-vrm-core.module.js",
+    "@pixiv/three-vrm-materials-hdr-emissive-multiply": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-materials-hdr-emissive-multiply@2.1.0/lib/three-vrm-materials-hdr-emissive-multiply.module.js"
+  }
+}
+</script>
+
+<style>
+* { -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #1a1a2e;
+  color: white;
+}
+canvas { touch-action: none; display: block; }
+
+/* Loading overlay */
+#loading {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: #1a1a2e;
+  z-index: 100;
+  transition: opacity 0.5s;
+}
+#loading.hidden { opacity: 0; pointer-events: none; }
+#loading h1 {
+  font-size: 24px; margin-bottom: 24px;
+  background: linear-gradient(135deg, #e94560, #0f3460);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.loader-bar {
+  width: 280px; height: 4px;
+  background: #16213e; border-radius: 2px; overflow: hidden;
+}
+.loader-bar .fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #e94560, #0f3460);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+#loading p { margin-top: 12px; font-size: 13px; color: #888; }
+
+/* Controls overlay */
+#controls {
+  position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 12px; align-items: center;
+  z-index: 50;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(10px);
+  padding: 10px 20px;
+  border-radius: 30px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+#controls button {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center;
+}
+#controls button:hover { background: rgba(255,255,255,0.2); }
+#controls button:active { transform: scale(0.9); }
+#controls .time {
+  font-size: 12px; color: #aaa;
+  min-width: 80px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Info overlay */
+#info {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 50;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(8px);
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: #ccc;
+  white-space: nowrap;
+  border: 1px solid rgba(255,255,255,0.06);
+  pointer-events: none;
+}
+
+/* Drag zone */
+#dropzone {
+  position: fixed; inset: 80px; z-index: 200;
+  border: 3px dashed rgba(233,69,96,0.4);
+  border-radius: 24px;
+  display: none;
+  align-items: center; justify-content: center;
+  background: rgba(26,26,46,0.85);
+  backdrop-filter: blur(12px);
+  font-size: 20px; color: #e94560;
+  pointer-events: none;
+}
+#dropzone.drag-over { display: flex; border-color: #e94560; background: rgba(26,26,46,0.95); }
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading">
+  <h1>🎵 VRM + VMD Dance</h1>
+  <div class="loader-bar"><div class="fill" id="progress-fill"></div></div>
+  <p id="status-text">加载中...</p>
+</div>
+
+<!-- Drop zone -->
+<div id="dropzone">📁 拖放 VRM 或 VMD 文件到此处</div>
+
+<!-- Info -->
+<div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
+
+<!-- Controls -->
+<div id="controls">
+  <button id="btnPlay" title="播放/暂停">▶</button>
+  <div class="time" id="timeDisplay">0:00 / 0:00</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
+import * as THREEVRM from '@pixiv/three-vrm';
+
+// ─── Configuration ──────────────────────────────────────
+
+const VMD_FPS = 30;
+const cfg = {
+  modelPath: './models/猫女郎.vrm',
+  vmdPaths: ['./vmd/兰若酒醉的蝴蝶mmd数据.vmd'],
+  audioPath: './audio/酒醉的蝴蝶音频.wav',
+  vrmScale: 1.0,
+};
+
+// ─── DOM refs ────────────────────────────────────────────
+
+const loadingEl = document.getElementById('loading');
+const progressFill = document.getElementById('progress-fill');
+const statusText = document.getElementById('status-text');
+const btnPlay = document.getElementById('btnPlay');
+const timeDisplay = document.getElementById('timeDisplay');
+const dropzone = document.getElementById('dropzone');
+
+function setProgress(pct, msg) {
+  progressFill.style.width = Math.min(pct, 100) + '%';
+  if (msg) statusText.textContent = msg;
+}
+
+// ─── Bone Mapping (from SystemAnimatorOnline) ─────────────
+
+const boneMapMMDToVRM = {
+  'センター': 'hips',
+  '上半身': 'spine',
+  '上半身2': 'chest',
+  '上半身3': 'upperChest',
+  '首': 'neck',
+  '頭': 'head',
+  '右肩': 'rightShoulder',
+  '右腕': 'rightUpperArm',
+  '右ひじ': 'rightLowerArm',
+  '右手首': 'rightHand',
+  '右親指０': 'rightThumbMetacarpal',
+  '右親指１': 'rightThumbProximal',
+  '右親指２': 'rightThumbDistal',
+  '右小指１': 'rightLittleProximal',
+  '右小指２': 'rightLittleIntermediate',
+  '右小指３': 'rightLittleDistal',
+  '右薬指１': 'rightRingProximal',
+  '右薬指２': 'rightRingIntermediate',
+  '右薬指３': 'rightRingDistal',
+  '右中指１': 'rightMiddleProximal',
+  '右中指２': 'rightMiddleIntermediate',
+  '右中指３': 'rightMiddleDistal',
+  '右人指１': 'rightIndexProximal',
+  '右人指２': 'rightIndexIntermediate',
+  '右人指３': 'rightIndexDistal',
+  '左肩': 'leftShoulder',
+  '左腕': 'leftUpperArm',
+  '左ひじ': 'leftLowerArm',
+  '左手首': 'leftHand',
+  '左親指０': 'leftThumbMetacarpal',
+  '左親指１': 'leftThumbProximal',
+  '左親指２': 'leftThumbDistal',
+  '左小指１': 'leftLittleProximal',
+  '左小指２': 'leftLittleIntermediate',
+  '左小指３': 'leftLittleDistal',
+  '左薬指１': 'leftRingProximal',
+  '左薬指２': 'leftRingIntermediate',
+  '左薬指３': 'leftRingDistal',
+  '左中指１': 'leftMiddleProximal',
+  '左中指２': 'leftMiddleIntermediate',
+  '左中指３': 'leftMiddleDistal',
+  '左人指１': 'leftIndexProximal',
+  '左人指２': 'leftIndexIntermediate',
+  '左人指３': 'leftIndexDistal',
+  '右目': 'rightEye',
+  '左目': 'leftEye',
+  '右足': 'rightUpperLeg',
+  '右ひざ': 'rightLowerLeg',
+  '右足首': 'rightFoot',
+  '右足先EX': 'rightToes',
+  '左足': 'leftUpperLeg',
+  '左ひざ': 'leftLowerLeg',
+  '左足首': 'leftFoot',
+  '左足先EX': 'leftToes',
+};
+
+// Morph mapping (VRM 1.0)
+const morphMapMMDToVRM1 = {
+  'あ': 'aa', 'い': 'ih', 'う': 'ou', 'え': 'ee', 'お': 'oh',
+  'まばたき': 'blink',
+  'ウィンク': 'blinkLeft', 'ウィンク２': 'blinkLeft',
+  'ウィンク右': 'blinkRight',
+  'にこり': 'relaxed', '困る': 'sad', '怒り': 'angry', '笑い': 'happy',
+};
+
+// Morph mapping (VRM 0.x)
+const morphMapMMDToVRM0 = {
+  'あ': 'a', 'い': 'i', 'う': 'u', 'え': 'e', 'お': 'o',
+  'まばたき': 'blink',
+  'ウィンク': 'blink_l', 'ウィンク２': 'blink_l',
+  'ウィンク右': 'blink_r',
+  'にこり': 'fun', '困る': 'sorrow', '怒り': 'angry', '笑い': 'joy',
+};
+
+// ─── Scene Setup ─────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+// Lights
+const ambient = new THREE.AmbientLight(0x404060, 0.6);
+scene.add(ambient);
+
+const hemi = new THREE.HemisphereLight(0x87CEEB, 0x3a7d44, 0.8);
+scene.add(hemi);
+
+const dirLight = new THREE.DirectionalLight(0xFFEECC, 2.0);
+dirLight.position.set(8, 15, 10);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 50;
+dirLight.shadow.camera.left = -10;
+dirLight.shadow.camera.right = 10;
+dirLight.shadow.camera.top = 10;
+dirLight.shadow.camera.bottom = -10;
+scene.add(dirLight);
+
+const rimLight = new THREE.DirectionalLight(0x8888FF, 0.5);
+rimLight.position.set(-5, 3, -8);
+scene.add(rimLight);
+
+// Ground
+const groundGeo = new THREE.PlaneGeometry(30, 30);
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x2a2a4a, roughness: 0.9, metalness: 0,
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.01;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const gridHelper = new THREE.GridHelper(30, 30, 0x4a4a6a, 0x3a3a5a);
+gridHelper.position.y = 0;
+scene.add(gridHelper);
+
+// Camera
+const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 1.5, 4);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 1.5;
+controls.maxDistance = 10;
+controls.maxPolarAngle = Math.PI * 0.55;
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+controls.update();
+
+// ─── VRM Load ────────────────────────────────────────────
+
+let vrm = null;
+let vrmScene = null;
+let currentHelper = null;
+
+async function loadVRM() {
+  setProgress(10, '加载 VRM 模型...');
+
+  const loader = new GLTFLoader();
+  loader.register((parser) => new THREEVRM.VRMLoaderPlugin(parser));
+
+  const gltf = await new Promise((resolve, reject) => {
+    loader.load(cfg.modelPath, resolve, (xhr) => {
+      const pct = 10 + (xhr.loaded / xhr.total) * 40;
+      setProgress(pct, `加载 VRM 模型... ${Math.round(xhr.loaded / 1024)}KB`);
+    }, reject);
+  });
+
+  vrm = gltf.userData.vrm;
+  vrmScene = gltf.scene;
+
+  // Scale to fit
+  const box = new THREE.Box3().setFromObject(vrmScene);
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const targetHeight = 1.6;
+  const scale = targetHeight / maxDim;
+  vrmScene.scale.set(scale, scale, scale);
+
+  vrmScene.position.y = 0;
+  vrmScene.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  scene.add(vrmScene);
+
+  // Update VRM
+  vrm.update(0);
+
+  setProgress(55, 'VRM 模型加载完成');
+}
+
+// ─── VMD Load & Parse ────────────────────────────────────
+
+let vmdData = null; // { bones: [], morphs: [], totalFrames: 0 }
+
+async function loadVMD() {
+  setProgress(55, '加载 VMD 动作数据...');
+
+  const loader = new MMDLoader();
+  const url = cfg.vmdPaths[0];
+
+  vmdData = await new Promise((resolve, reject) => {
+    loader.loadVMD(url, resolve, (xhr) => {
+      const pct = 55 + (xhr.loaded / xhr.total) * 25;
+      setProgress(pct, `加载 VMD 动作... ${Math.round(xhr.loaded / 1024)}KB`);
+    }, reject);
+  });
+
+  // Sort keyframes by bone name and frame number
+  const boneTracks = {};
+  if (vmdData.bones) {
+    vmdData.bones.forEach(kf => {
+      if (!boneTracks[kf.name]) boneTracks[kf.name] = [];
+      boneTracks[kf.name].push(kf);
+    });
+    Object.values(boneTracks).forEach(track => track.sort((a, b) => a.frame - b.frame));
+  }
+  vmdData._boneTracks = boneTracks;
+
+  // Same for morphs
+  const morphTracks = {};
+  if (vmdData.morphs) {
+    vmdData.morphs.forEach(kf => {
+      if (!morphTracks[kf.name]) morphTracks[kf.name] = [];
+      morphTracks[kf.name].push(kf);
+    });
+    Object.values(morphTracks).forEach(track => track.sort((a, b) => a.frame - b.frame));
+  }
+  vmdData._morphTracks = morphTracks;
+
+  // Calculate total duration
+  let maxFrame = 0;
+  if (vmdData.bones) {
+    vmdData.bones.forEach(kf => { if (kf.frame > maxFrame) maxFrame = kf.frame; });
+  }
+  if (vmdData.morphs) {
+    vmdData.morphs.forEach(kf => { if (kf.frame > maxFrame) maxFrame = kf.frame; });
+  }
+  vmdData.totalFrames = maxFrame;
+
+  setProgress(85, `VMD 加载完成 (${vmdData.bones?.length || 0} 骨骼关键帧, ${vmdData.totalFrames} 帧)`);
+}
+
+// ─── Audio Load ───────────────────────────────────────────
+
+let audioBuffer = null;
+let audioCtx = null;
+let sourceNode = null;
+let gainNode = null;
+let audioStartTime = 0;
+let audioPauseOffset = 0;
+let isAudioInitialized = false;
+
+async function loadAudio() {
+  setProgress(85, '加载音频...');
+  const resp = await fetch(cfg.audioPath);
+  const arrayBuffer = await resp.arrayBuffer();
+  audioCtx = new AudioContext();
+  audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.7;
+  gainNode.connect(audioCtx.destination);
+  isAudioInitialized = true;
+  setProgress(100, '加载完成 ✓');
+  setTimeout(() => { loadingEl.classList.add('hidden'); }, 500);
+}
+
+// ─── VMD Cubic Bezier Interpolation ──────────────────────
+
+/**
+ * VMD interpolation: 24 bytes, 4 curves (x, y, z, rotation).
+ * Each curve: [x1, y1, x2, y2] where values are 0-127, mapped to 0-1.
+ */
+function interpolateVMD(curve, time, kf0, kf1) {
+  if (!kf0 && !kf1) return 0;
+  if (!kf1) return 1;
+  if (!kf0) return 0;
+
+  const frameDiff = kf1.frame - kf0.frame;
+  if (frameDiff <= 0) return 1;
+
+  // t is the raw linear ratio between the two keyframes
+  const t = (time - kf0.frame) / frameDiff;
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+
+  // Extract bezier control points for this axis
+  const idxMap = [0, 4, 8, 12]; // curve offset in interpolation array for X, Y, Z, rotation
+  const axis = 0; // We interpolate time uniformly using the X curve
+  const base = idxMap[axis];
+  const cpx1 = curve[base] / 127; // cx1
+  const cpy1 = curve[base + 1] / 127; // cy1
+  const cpx2 = curve[base + 2] / 127; // cx2
+  const cpy2 = curve[base + 3] / 127; // cy2
+
+  // Solve for t_bezier where Bx(t_bezier) = input_t using Newton's method
+  // B(t) = 3(1-t)²*t*P1 + 3(1-t)*t²*P2 + t³
+  // Bx(t) = 3(1-t)²*t*cpx1 + 3(1-t)*t²*cpx2 + t³
+
+  let guess = t;
+  for (let i = 0; i < 8; i++) {
+    const t2 = guess * guess;
+    const t3 = t2 * guess;
+    const omt = 1 - guess;
+    const omt2 = omt * omt;
+    // Bx
+    const bx = 3 * omt2 * guess * cpx1 + 3 * omt * t2 * cpx2 + t3;
+    // dBx/dt
+    const dbx = 3 * (omt2 - 2 * omt * guess) * cpx1 + 3 * (2 * omt * guess - t2) * cpx2 + 3 * t2;
+
+    if (Math.abs(bx - t) < 1e-5) break;
+    if (Math.abs(dbx) < 1e-10) break;
+
+    guess = guess - (bx - t) / dbx;
+    guess = Math.max(0, Math.min(1, guess));
+  }
+
+  // Evaluate By at the found t_bezier
+  const g2 = guess * guess;
+  const g3 = g2 * guess;
+  const omg = 1 - guess;
+  const omg2 = omg * omg;
+  const by = 3 * omg2 * guess * cpy1 + 3 * omg * g2 * cpy2 + g3;
+
+  return Math.max(0, Math.min(1, by));
+}
+
+// ─── Quaternion Slerp ─────────────────────────────────────
+
+function slerp(qa, qb, t) {
+  const qm = new THREE.Quaternion();
+  let cosHalfTheta = qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w;
+  if (cosHalfTheta < 0) {
+    qb = qb.clone().negate();
+    cosHalfTheta = -cosHalfTheta;
+  }
+  if (Math.abs(cosHalfTheta) >= 0.999) {
+    qm.x = qa.x; qm.y = qa.y; qm.z = qa.z; qm.w = qa.w;
+    return qm;
+  }
+  const halfTheta = Math.acos(cosHalfTheta);
+  const sinHalfTheta = Math.sqrt(1 - cosHalfTheta * cosHalfTheta);
+  if (Math.abs(sinHalfTheta) < 0.001) {
+    qm.x = (qa.x + qb.x) * 0.5;
+    qm.y = (qa.y + qb.y) * 0.5;
+    qm.z = (qa.z + qb.z) * 0.5;
+    qm.w = (qa.w + qb.w) * 0.5;
+    return qm;
+  }
+  const a = Math.sin((1 - t) * halfTheta) / sinHalfTheta;
+  const b = Math.sin(t * halfTheta) / sinHalfTheta;
+  qm.x = qa.x * a + qb.x * b;
+  qm.y = qa.y * a + qb.y * b;
+  qm.z = qa.z * a + qb.z * b;
+  qm.w = qa.w * a + qb.w * b;
+  return qm;
+}
+
+// ─── Animation State ─────────────────────────────────────
+
+const clock = new THREE.Clock();
+let isPlaying = false;
+let animTime = 0; // in seconds
+
+// Pre-compute: for each MMD bone name that maps to VRM, store the track data
+let animBones = []; // [{ mmdName, vrmName, track, isRoot }]
+
+function setupAnimationTracks() {
+  if (!vmdData || !vrm) return;
+
+  // Check VRM version
+  const isVRM1 = vrm.meta && parseInt(vrm.meta.metaVersion) > 0;
+  const morphMap = isVRM1 ? morphMapMMDToVRM1 : morphMapMMDToVRM0;
+
+  animBones = [];
+  for (const mmdName in boneMapMMDToVRM) {
+    const track = vmdData._boneTracks[mmdName];
+    if (!track || track.length === 0) continue;
+    const vrmName = boneMapMMDToVRM[mmdName];
+    // Check if VRM has this bone
+    let boneNode;
+    try {
+      boneNode = vrm.humanoid?.getNormalizedBoneNode?.(vrmName) || vrm.humanoid?.getBoneNode?.(vrmName);
+    } catch (e) { /* skip */ }
+    if (!boneNode) continue;
+    animBones.push({
+      mmdName,
+      vrmName,
+      track,
+      isRoot: mmdName === 'センター',
+      boneNode,
+    });
+  }
+
+  // Morph mapping
+  animMorphs = [];
+  for (const mmdName in morphMap) {
+    const track = vmdData._morphTracks[mmdName];
+    if (!track || track.length === 0) continue;
+    const vrmName = morphMap[mmdName];
+    animMorphs.push({ mmdName, vrmName, track });
+  }
+}
+let animMorphs = [];
+
+// ─── Apply Frame ──────────────────────────────────────────
+
+const _q0 = new THREE.Quaternion();
+const _q1 = new THREE.Quaternion();
+const _euler = new THREE.Euler();
+const _v3 = new THREE.Vector3();
+
+function applyVMDAtFrame(frame) {
+  if (!vrm || !vmdData) return;
+
+  // Apply bone transforms
+  animBones.forEach(({ mmdName, vrmName, track, isRoot, boneNode }) => {
+    if (!boneNode) return;
+
+    // Find adjacent keyframes
+    const length = track.length;
+    if (frame < track[0].frame) {
+      // Before first keyframe: use first keyframe's transform
+      const kf = track[0];
+      boneNode.quaternion.fromArray(kf.rotation);
+      if (isRoot) boneNode.position.fromArray(kf.position);
+      return;
+    }
+    if (frame >= track[length - 1].frame) {
+      const kf = track[length - 1];
+      boneNode.quaternion.fromArray(kf.rotation);
+      if (isRoot) {
+        const pos = kf.position;
+        boneNode.position.set(-pos[0], pos[1], pos[2]);
+      }
+      return;
+    }
+
+    // Binary search for adjacent keyframes
+    let lo = 0, hi = length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (track[mid].frame <= frame) lo = mid;
+      else hi = mid;
+    }
+    const kf0 = track[lo];
+    const kf1 = track[hi];
+
+    // Interpolation factor with cubic bezier
+    const interp = interpolateVMD(kf0.interpolation, frame, kf0, kf1);
+
+    // Interpolate rotation (slerp)
+    _q0.fromArray(kf0.rotation);
+    _q1.fromArray(kf1.rotation);
+    const q = slerp(_q0, _q1, interp);
+    boneNode.quaternion.copy(q);
+
+    // Position (only for root/center bone)
+    if (isRoot) {
+      // VMD センター position: x=left/right, y=up/down, z=forward/back
+      // Three.js: x=right, y=up, z=negative forward
+      _v3.lerpVectors(
+        new THREE.Vector3(-kf0.position[0], kf0.position[1], kf0.position[2]),
+        new THREE.Vector3(-kf1.position[0], kf1.position[1], kf1.position[2]),
+        interp
+      );
+      boneNode.position.copy(_v3);
+    }
+  });
+
+  // Apply morphs (blendshapes)
+  const exprMgr = vrm.expressionManager || vrm.blendShapeProxy;
+  if (exprMgr) {
+    // Reset all expression weights
+    const presetNames = ['aa','ih','ou','ee','oh','blink','blinkLeft','blinkRight',
+      'relaxed','sad','angry','happy','a','i','u','e','o','blink_l','blink_r',
+      'fun','sorrow','joy'];
+    presetNames.forEach(name => {
+      try { exprMgr.setValue(name, 0); } catch (e) {}
+    });
+
+    // Apply VMD morphs
+    animMorphs.forEach(({ track, vrmName }) => {
+      const length = track.length;
+      if (frame < track[0].frame) {
+        exprMgr.setValue(vrmName, track[0].weight);
+        return;
+      }
+      if (frame >= track[length - 1].frame) {
+        exprMgr.setValue(vrmName, track[length - 1].weight);
+        return;
+      }
+
+      let lo = 0, hi = length - 1;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (track[mid].frame <= frame) lo = mid;
+        else hi = mid;
+      }
+      const kf0 = track[lo], kf1 = track[hi];
+      const interp = (kf1.frame === kf0.frame) ? 0 : (frame - kf0.frame) / (kf1.frame - kf0.frame);
+      const weight = kf0.weight + (kf1.weight - kf0.weight) * interp;
+      exprMgr.setValue(vrmName, Math.max(0, Math.min(1, weight)));
+    });
+  }
+}
+
+// ─── Playback ─────────────────────────────────────────────
+
+let lastAnimFrame = -1;
+
+function startPlayback() {
+  if (!vmdData || !vrm) return;
+  clock.start();
+  animTime = 0;
+  lastAnimFrame = -1;
+  isPlaying = true;
+
+  // Audio
+  if (isAudioInitialized && audioBuffer && !sourceNode) {
+    sourceNode = audioCtx.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(gainNode);
+    sourceNode.start(0);
+    audioStartTime = audioCtx.currentTime;
+    audioPauseOffset = 0;
+  }
+
+  btnPlay.textContent = '⏸';
+}
+
+function pausePlayback() {
+  isPlaying = false;
+  if (sourceNode) {
+    audioPauseOffset = audioCtx.currentTime - audioStartTime;
+    try { sourceNode.stop(); } catch (e) {}
+    sourceNode = null;
+  }
+  btnPlay.textContent = '▶';
+}
+
+function stopPlayback() {
+  isPlaying = false;
+  if (sourceNode) {
+    try { sourceNode.stop(); } catch (e) {}
+    sourceNode = null;
+  }
+  audioPauseOffset = 0;
+  animTime = 0;
+  lastAnimFrame = -1;
+  btnPlay.textContent = '▶';
+}
+
+// ─── Animation Loop ───────────────────────────────────────
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const dt = clock.getDelta();
+
+  if (isPlaying && vmdData) {
+    animTime += dt;
+
+    // Limit to VMD duration
+    const maxTime = vmdData.totalFrames / VMD_FPS;
+    if (animTime >= maxTime) {
+      animTime = 0;
+      // Reset audio
+      if (sourceNode) {
+        try { sourceNode.stop(); } catch (e) {}
+        sourceNode = null;
+      }
+      if (isAudioInitialized && audioBuffer) {
+        sourceNode = audioCtx.createBufferSource();
+        sourceNode.buffer = audioBuffer;
+        sourceNode.connect(gainNode);
+        sourceNode.start(0);
+        audioStartTime = audioCtx.currentTime;
+        audioPauseOffset = 0;
+      }
+    }
+
+    // Compute VMD frame (with fractional part for smooth interpolation)
+    const vmdFrame = animTime * VMD_FPS;
+    applyVMDAtFrame(vmdFrame);
+
+    // Update UI
+    const cur = Math.floor(animTime);
+    const max = Math.floor(maxTime);
+    timeDisplay.textContent =
+      `${Math.floor(cur / 60)}:${String(cur % 60).padStart(2, '0')} / ` +
+      `${Math.floor(max / 60)}:${String(max % 60).padStart(2, '0')}`;
+  }
+
+  // Update VRM
+  if (vrm) vrm.update(dt);
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// ─── Resize ───────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+});
+
+// ─── Play Button ──────────────────────────────────────────
+
+btnPlay.addEventListener('click', async () => {
+  if (audioCtx && audioCtx.state === 'suspended') {
+    await audioCtx.resume();
+  }
+  if (isPlaying) {
+    pausePlayback();
+  } else {
+    // If animation ended (looped or stopped), restart from beginning
+    if (animTime <= 0 || !sourceNode) {
+      startPlayback();
+    } else {
+      // Resume
+      isPlaying = true;
+      if (isAudioInitialized && audioBuffer && !sourceNode) {
+        sourceNode = audioCtx.createBufferSource();
+        sourceNode.buffer = audioBuffer;
+        sourceNode.connect(gainNode);
+        sourceNode.start(0, audioPauseOffset);
+        audioStartTime = audioCtx.currentTime - audioPauseOffset;
+      }
+      btnPlay.textContent = '⏸';
+    }
+  }
+});
+
+// ─── Drag & Drop (hot-swap VRM/VMD) ───────────────────────
+
+document.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+document.addEventListener('dragleave', () => { dropzone.classList.remove('drag-over'); });
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  // File drop handling skipped for mobile focus
+});
+
+// ─── Init ─────────────────────────────────────────────────
+
+async function init() {
+  try {
+    await loadVRM();
+    await loadVMD();
+    setupAnimationTracks();
+
+    if (animBones.length === 0) {
+      console.warn('No mapped bones found! VMD bone names:', Object.keys(vmdData._boneTracks || {}));
+    } else {
+      console.log(`Mapped ${animBones.length} bones, ${animMorphs.length} morphs`);
+    }
+
+    await loadAudio();
+    animate();
+
+    // Auto-start after a brief delay
+    setTimeout(() => {
+      if (!isPlaying) startPlayback();
+    }, 1000);
+  } catch (err) {
+    console.error('Init error:', err);
+    statusText.textContent = '❌ 加载失败: ' + err.message;
+  }
+}
+
+init();
+</script>
+</body>
+</html>
