@@ -23,6 +23,7 @@ const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _q = new THREE.Quaternion();
 const _euler = new THREE.Euler();
+const _armAxisFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
 
 function getBoneNodes(vrm) {
   const nodes = new Map();
@@ -181,6 +182,10 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
         if (name === 'rightLowerArm' && rightTwist) q.multiply(mmdQuaternion(rightTwist, frame));
       }
       q = convertMmdRotationToVrm(q, metaVersion);
+      // MMD arm chains use the opposite bend basis from the canonical BVH
+      // arm axes. Conjugating by Xπ preserves the motion magnitude while
+      // correcting its up/down and front/back direction for VRMA retargeting.
+      if (/^(left|right)(UpperArm|LowerArm|Hand)$/.test(name)) q.premultiply(_armAxisFlip).multiply(_armAxisFlip);
       values.push(...toYxz(q.toArray()).map((v) => v.toFixed(6)));
     }
     lines.push(values.join(' '));
