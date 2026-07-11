@@ -32,6 +32,7 @@ canvas { touch-action:none; display:block; }
 #controls button:active { transform:scale(.9); }
 #controls .time { font-size:12px; color:#aaa; min-width:80px; text-align:center; font-variant-numeric:tabular-nums; }
 #info { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:50; background:rgba(0,0,0,.4); backdrop-filter:blur(8px); padding:6px 16px; border-radius:20px; font-size:12px; color:#ccc; white-space:nowrap; border:1px solid rgba(255,255,255,.06); pointer-events:none; }
+#ver { position:fixed; bottom:6px; right:8px; z-index:50; font-size:10px; color:rgba(255,255,255,.2); pointer-events:none; user-select:none; -webkit-user-select:none; }
 </style>
 </head>
 <body>
@@ -41,6 +42,7 @@ canvas { touch-action:none; display:block; }
   <p id="status-text">加载中...</p>
 </div>
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
+<div id="ver">v20260711003932</div>
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
