@@ -253,13 +253,13 @@ function applyVMDAtFrame(frame){
     if(frame<=track[0].frame){
       const kf=track[0];
       boneNode.quaternion.fromArray(kf.rotation);
-      if(isRoot) boneNode.position.set(-kf.position[0],kf.position[1],kf.position[2]);
+      if(isRoot) boneNode.position.set(-kf.position[0]*0.085, kf.position[1]*0.085, kf.position[2]*0.085);
       return;
     }
     if(frame>=track[len-1].frame){
       const kf=track[len-1];
       boneNode.quaternion.fromArray(kf.rotation);
-      if(isRoot) boneNode.position.set(-kf.position[0],kf.position[1],kf.position[2]);
+      if(isRoot) boneNode.position.set(-kf.position[0]*0.085, kf.position[1]*0.085, kf.position[2]*0.085);
       return;
     }
     let lo=0,hi=len-1;
@@ -275,8 +275,8 @@ function applyVMDAtFrame(frame){
     boneNode.quaternion.copy(_q0);
 
     if(isRoot){
-      _v3.set(-kf0.position[0],kf0.position[1],kf0.position[2])
-        .lerp(new THREE.Vector3(-kf1.position[0],kf1.position[1],kf1.position[2]),interp);
+      _v3.set(-kf0.position[0]*0.085, kf0.position[1]*0.085, kf0.position[2]*0.085)
+        .lerp(new THREE.Vector3(-kf1.position[0]*0.085, kf1.position[1]*0.085, kf1.position[2]*0.085), interp);
       boneNode.position.copy(_v3);
     }
   });
@@ -306,11 +306,14 @@ function animate(){
         sourceNode.connect(gainNode); sourceNode.start(0);
       }
     }
+  }
+  // CRITICAL: vrm.update() resets humanoid bones — must call BEFORE applyVMDAtFrame
+  if(vrm) vrm.update(dt);
+  if(isPlaying&&vmdData){
     applyVMDAtFrame(animTime*VMD_FPS);
-    const c=Math.floor(animTime),m=Math.floor(mt);
+    const c=Math.floor(animTime),m=Math.floor(vmdData.totalFrames/VMD_FPS);
     timeDisplay.textContent=`${Math.floor(c/60)}:${String(c%60).padStart(2,'0')} / ${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`;
   }
-  if(vrm) vrm.update(dt);
   controls.update();
   renderer.render(scene,camera);
 }
