@@ -35,5 +35,5 @@ assert.match(text, /JOINT rightLowerLeg/);
 const bvh = new BVHLoader().parse(text);
 assert.equal(bvh.clip.duration > 0, true);
 const rootTrack = bvh.clip.tracks.find((track) => track.name.endsWith('hips.position'));
-assert.equal(rootTrack.values[3] > rootTrack.values[0], true, 'groove must drive root translation');
+assert.equal(rootTrack.values[3], rootTrack.values[0], 'loop-safe root conversion must close the first/last root positions');
 console.log('retarget pipeline tests passed');

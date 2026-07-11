@@ -18,6 +18,7 @@ import {
 
 const _world = new THREE.Vector3();
 const _tmpV = new THREE.Vector3();
+const _rootTemp = new THREE.Vector3();
 const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _q = new THREE.Quaternion();
@@ -124,6 +125,13 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
   for (const keys of byMmd.values()) if (keys.length) maxFrame = Math.max(maxFrame, keys.at(-1).frame);
   const totalFrames = options.maxFrames ?? maxFrame + 1;
   const hipsRest = nodes.get('hips').position.clone();
+  // VMD root tracks often contain stage traversal, not a loop-safe dance offset.
+  // Repeating that absolute track snaps the avatar from its final position back to
+  // the first frame. Convert it to an in-place, closed trajectory by removing the
+  // initial offset and the first→last linear drift; preserve the local sway.
+  const rootFirst = interpolate(root.keys, 0)?.pos ?? [0, 0, 0];
+  const rootLast = interpolate(root.keys, totalFrames - 1)?.pos ?? rootFirst;
+  const rootDrift = new THREE.Vector3().fromArray(rootLast).sub(_tmpV.fromArray(rootFirst));
 
   const lines = ['HIERARCHY', ...writeHierarchy('hips', offsets), 'MOTION', `Frames: ${totalFrames}`, `Frame Time: ${(1 / fps).toFixed(6)}`];
   for (let frame = 0; frame < totalFrames; frame++) {
@@ -134,7 +142,11 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
         const rootKey = interpolate(root.keys, frame);
         const parentKey = interpolate(allParent, frame);
         const pos = hipsRest.clone();
-        if (rootKey) pos.add(_tmpV.fromArray(rootKey.pos).multiplyScalar(rootScale));
+        if (rootKey) {
+          const phase = totalFrames > 1 ? frame / (totalFrames - 1) : 0;
+          const closedRoot = _tmpV.fromArray(rootKey.pos).sub(_rootTemp.fromArray(rootFirst)).sub(_world.copy(rootDrift).multiplyScalar(phase));
+          pos.add(closedRoot.multiplyScalar(rootScale));
+        }
         if (parentKey) pos.add(_tmpV.fromArray(parentKey.pos).multiplyScalar(rootScale));
         values.push(pos.x.toFixed(6), pos.y.toFixed(6), pos.z.toFixed(6));
         q = mmdQuaternion(root.keys, frame).clone();
