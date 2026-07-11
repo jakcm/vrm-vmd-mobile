@@ -145,11 +145,11 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
         if (rootKey) {
           const phase = totalFrames > 1 ? frame / (totalFrames - 1) : 0;
           const closedRoot = _tmpV.fromArray(rootKey.pos).sub(_rootTemp.fromArray(rootFirst)).sub(_world.copy(rootDrift).multiplyScalar(phase));
-          // The source VMD contains large stage-walking motion on グルーブ. This
-          // mobile player loops a single character in a fixed camera frame, so
-          // preserve vertical bounce only and deliberately discard horizontal
-          // locomotion; otherwise it reads as persistent model drift.
+          // This fixed-camera player must not animate hips translation. The VMD
+          // root track represents stage locomotion (including its Y component),
+          // not a safe local-body bob. Keep dance motion in rotations only.
           closedRoot.x = 0;
+          closedRoot.y = 0;
           closedRoot.z = 0;
           pos.add(closedRoot.multiplyScalar(rootScale));
         }
