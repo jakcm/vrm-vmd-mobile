@@ -107,6 +107,17 @@ function mmdQuaternion(keys, frame) {
   return key ? _q.fromArray(key.rot) : _q.identity();
 }
 
+// MMD coordinates and VRM 0.x use opposite X/Z handedness. SystemAnimatorOnline
+// applies this exact correction in process_rotation() before creating VRM tracks.
+export function convertMmdRotationToVrm(rotation, metaVersion = '0') {
+  const result = rotation.clone();
+  if (metaVersion === '0') {
+    result.x *= -1;
+    result.z *= -1;
+  }
+  return result;
+}
+
 export function vmdToBVH(vmdData, vrm, options = {}) {
   const fps = options.fps ?? 30;
   const nodes = getBoneNodes(vrm);
@@ -120,6 +131,9 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
   const leftTwist = byMmd.get('左手捩');
   const rightTwist = byMmd.get('右手捩');
   const rootScale = options.rootScale ?? inferRootScale(vrm);
+  // The loaded catgirl is VRM 0.0. Match SystemAnimatorOnline's process_rotation:
+  // MMD local deltas need X/Z handedness conversion before being serialized to BVH.
+  const metaVersion = vrm.meta?.metaVersion ?? '0';
   const names = collectVrmBoneNames().filter((name) => offsets.has(name));
   let maxFrame = 0;
   for (const keys of byMmd.values()) if (keys.length) maxFrame = Math.max(maxFrame, keys.at(-1).frame);
@@ -164,6 +178,7 @@ export function vmdToBVH(vmdData, vrm, options = {}) {
         if (name === 'leftLowerArm' && leftTwist) q.multiply(mmdQuaternion(leftTwist, frame));
         if (name === 'rightLowerArm' && rightTwist) q.multiply(mmdQuaternion(rightTwist, frame));
       }
+      q = convertMmdRotationToVrm(q, metaVersion);
       values.push(...toYxz(q.toArray()).map((v) => v.toFixed(6)));
     }
     lines.push(values.join(' '));
