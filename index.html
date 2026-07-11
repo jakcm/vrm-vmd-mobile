@@ -8,9 +8,10 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/",
-    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js",
+    "@pixiv/three-vrm-materials-mtoon": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-materials-mtoon@2.1.0/lib/three-vrm-materials-mtoon.module.js"
   }
 }
 </script>
@@ -41,16 +42,8 @@ canvas { touch-action: none; display: block; }
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-.loader-bar {
-  width: 280px; height: 4px;
-  background: #16213e; border-radius: 2px; overflow: hidden;
-}
-.loader-bar .fill {
-  height: 100%; width: 0%;
-  background: linear-gradient(90deg, #e94560, #0f3460);
-  border-radius: 2px;
-  transition: width 0.3s;
-}
+.loader-bar { width: 280px; height: 4px; background: #16213e; border-radius: 2px; overflow: hidden; }
+.loader-bar .fill { height: 100%; width: 0%; background: linear-gradient(90deg, #e94560, #0f3460); border-radius: 2px; transition: width 0.3s; }
 #loading p { margin-top: 12px; font-size: 13px; color: #888; }
 
 #controls {
@@ -81,7 +74,6 @@ canvas { touch-action: none; display: block; }
   min-width: 80px; text-align: center;
   font-variant-numeric: tabular-nums;
 }
-
 #info {
   position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
   z-index: 50;
@@ -106,7 +98,6 @@ canvas { touch-action: none; display: block; }
 </div>
 
 <div id="info">🐱 猫女郎 · 酒醉的蝴蝶</div>
-
 <div id="controls">
   <button id="btnPlay" title="播放/暂停">▶</button>
   <div class="time" id="timeDisplay">0:00 / 0:00</div>
@@ -119,8 +110,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import * as THREEVRM from '@pixiv/three-vrm';
 
-// ─── Config ──────────────────────────────────────────
+// ─── Patch getShadow for Three.js r171 ───────────────
+// The VRM 0.x MToon shader calls getShadow() with 5 params,
+// but r171's getShadow needs 6. We patch it globally.
+{
+  const chunk_getShadow = THREE.ShaderChunk?.shadowmap_pars_fragment;
+  if (chunk_getShadow) {
+    THREE.ShaderChunk.shadowmap_pars_fragment = chunk_getShadow.replace(
+      /float getShadow\([\s\S]*?\)/m,
+      `float getShadow(
+        sampler2D shadowMap, vec2 shadowMapSize,
+        float shadowBias, float shadowRadius,
+        vec4 shadowCoord
+      )`
+    );
+  }
+}
 
+// ─── Config ──────────────────────────────────────────
 const VMD_FPS = 30;
 const cfg = {
   modelPath: './models/猫女郎.vrm',
@@ -129,7 +136,6 @@ const cfg = {
 };
 
 // ─── DOM ─────────────────────────────────────────────
-
 const loadingEl = document.getElementById('loading');
 const progressFill = document.getElementById('progress-fill');
 const statusText = document.getElementById('status-text');
@@ -141,8 +147,7 @@ function setProgress(pct, msg) {
   if (msg) statusText.textContent = msg;
 }
 
-// ─── Bone Mapping (SystemAnimatorOnline core) ─────────
-
+// ─── Bone Mapping ─────────────────────────────────────
 const boneMapMMDToVRM = {
   'センター': 'hips', '上半身': 'spine', '上半身2': 'chest', '上半身3': 'upperChest',
   '首': 'neck', '頭': 'head',
@@ -163,8 +168,7 @@ const boneMapMMDToVRM = {
   '左足': 'leftUpperLeg', '左ひざ': 'leftLowerLeg', '左足首': 'leftFoot', '左足先EX': 'leftToes',
 };
 
-// ─── Scene Setup (matching vrm-viewer-mobile style) ──
-
+// ─── Scene Setup ──────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -174,22 +178,18 @@ document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1a2e);
 
-// Lights — simple and clean, matching vrm-viewer-mobile
+// Lights
 scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 const dirLight = new THREE.DirectionalLight(0xffffff, 3.0);
 dirLight.position.set(1, 1, 1).normalize();
 scene.add(dirLight);
-
-// Extra fill lights
 scene.add(new THREE.DirectionalLight(0x8888ff, 0.5).position.set(-1, 0.5, -1).normalize());
 scene.add(new THREE.DirectionalLight(0xff8888, 0.3).position.set(0, -1, 0.5).normalize());
 
-// Ground grid
 const grid = new THREE.GridHelper(10, 10, 0x444466, 0x333355);
 grid.position.y = 0;
 scene.add(grid);
 
-// Camera
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20);
 camera.position.set(0, 1, 5);
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -200,8 +200,7 @@ controls.screenSpacePanning = true;
 controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 controls.update();
 
-// ─── VRM Load (matching vrm-viewer-mobile exactly) ──
-
+// ─── VRM Load ────────────────────────────────────────
 let vrm = null;
 let vrmScene = null;
 
@@ -223,7 +222,7 @@ async function loadVRM() {
   THREEVRM.VRMUtils.combineSkeletons(vrmScene);
   THREEVRM.VRMUtils.combineMorphs(vrm);
 
-  // Normalize height
+  // Normalize
   const box = new THREE.Box3().setFromObject(vrmScene);
   const size = box.getSize(new THREE.Vector3());
   const scale = 1.6 / Math.max(size.x, size.y, size.z);
@@ -231,71 +230,42 @@ async function loadVRM() {
   vrmScene.position.y = 0;
   vrmScene.rotation.y = Math.PI;
 
-  // ── Convert ALL materials to MeshStandardMaterial ──
+  // Patch ALL ShaderMaterials BEFORE first render
   vrmScene.traverse(child => {
     if (!child.isMesh) return;
     child.frustumCulled = false;
     const mats = Array.isArray(child.material) ? child.material : [child.material];
-    mats.forEach((mat, i) => {
-      // Extract texture from uniforms first
-      let mainTex = null;
-      let tintColor = new THREE.Color(0xffffff);
-      if (mat.uniforms) {
-        if (mat.uniforms._MainTex?.value) mainTex = mat.uniforms._MainTex.value;
-        else if (mat.uniforms._ShadeTexture?.value) mainTex = mat.uniforms._ShadeTexture.value;
-        else if (mat.uniforms._MultiplyTexture?.value) mainTex = mat.uniforms._MultiplyTexture.value;
-        if (mat.uniforms._Color?.value) tintColor.copy(mat.uniforms._Color.value);
-      }
-      // Also check material.map
-      if (!mainTex && mat.map) mainTex = mat.map;
-
-      const newMat = new THREE.MeshStandardMaterial({
-        roughness: 0.85,
-        metalness: 0.0,
-        side: mat.side || THREE.FrontSide,
-        transparent: !!mat.transparent,
-        opacity: mat.opacity ?? 1.0,
-        depthWrite: mat.depthWrite ?? true,
-        color: tintColor,
-      });
-
-      if (mainTex) {
-        mainTex.colorSpace = THREE.SRGBColorSpace;
-        mainTex.needsUpdate = true;
-        // Force texture encoding
-        if (mainTex.encoding !== undefined) {
-          mainTex.encoding = THREE.sRGBEncoding;
-        }
-        newMat.map = mainTex;
-      }
-
-      if (Array.isArray(child.material)) child.material[i] = newMat;
-      else child.material = newMat;
-      if (mat.dispose) mat.dispose();
+    mats.forEach(mat => {
+      if (!mat.isShaderMaterial && mat.type !== 'ShaderMaterial') return;
+      // Patch getShadow to return 1.0 (no shadow)
+      const origOnBeforeCompile = mat.onBeforeCompile;
+      mat.onBeforeCompile = function(shader) {
+        if (origOnBeforeCompile) origOnBeforeCompile.call(this, shader);
+        // The MToon shader includes getShadow() with incompatible signature
+        shader.fragmentShader = shader.fragmentShader.replace(
+          /getShadow\s*\([^)]+\)/g,
+          '1.0'
+        );
+      };
     });
   });
 
   scene.add(vrmScene);
   vrm.update(0);
-
   setProgress(55, 'VRM 加载完成');
 }
 
 // ─── VMD Load ────────────────────────────────────────
-
 let vmdData = null;
 
 async function loadVMD() {
   setProgress(55, '加载 VMD 动作...');
   const loader = new MMDLoader();
-
   vmdData = await new Promise((resolve, reject) => {
     loader.loadVMD(cfg.vmdPaths[0], resolve, xhr => {
       setProgress(55 + (xhr.loaded / xhr.total) * 25, `加载 VMD... ${Math.round(xhr.loaded/1024)}KB`);
     }, reject);
   });
-
-  // Normalize: CDN may return {motions, boneName, frameNum} vs {bones, name, frame}
   if (!vmdData.bones && vmdData.motions) vmdData.bones = vmdData.motions;
   if (vmdData.bones) {
     vmdData.bones.forEach(kf => {
@@ -303,8 +273,6 @@ async function loadVMD() {
       if (kf.frameNum !== undefined && kf.frame === undefined) kf.frame = kf.frameNum;
     });
   }
-
-  // Build bone tracks
   const boneTracks = {};
   if (vmdData.bones) {
     vmdData.bones.forEach(kf => {
@@ -314,8 +282,6 @@ async function loadVMD() {
     Object.values(boneTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
   }
   vmdData._boneTracks = boneTracks;
-
-  // Morph tracks
   const morphTracks = {};
   if (vmdData.morphs) {
     vmdData.morphs.forEach(kf => {
@@ -325,19 +291,15 @@ async function loadVMD() {
     Object.values(morphTracks).forEach(t => t.sort((a, b) => a.frame - b.frame));
   }
   vmdData._morphTracks = morphTracks;
-
-  // Total duration
   vmdData.totalFrames = 0;
   if (vmdData.bones) vmdData.bones.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
   if (vmdData.morphs) vmdData.morphs.forEach(kf => { if (kf.frame > vmdData.totalFrames) vmdData.totalFrames = kf.frame; });
-
   setProgress(85, 'VMD 加载完成');
 }
 
 // ─── Audio Load ───────────────────────────────────────
-
 let audioCtx = null, audioBuffer = null, sourceNode = null, gainNode = null;
-let audioStartTime = 0, isAudioReady = false;
+let isAudioReady = false;
 
 async function loadAudio() {
   setProgress(85, '加载音频...');
@@ -353,12 +315,9 @@ async function loadAudio() {
   setTimeout(() => loadingEl.classList.add('hidden'), 500);
 }
 
-// ─── Animation System (VMD → VRM via Bone Mapping) ───
-
+// ─── Animation System ─────────────────────────────────
 const _q0 = new THREE.Quaternion(), _q1 = new THREE.Quaternion(), _v3 = new THREE.Vector3();
-
 let animBones = [];
-let animMorphs = [];
 let isPlaying = false;
 let animTime = 0;
 const clock = new THREE.Clock();
@@ -372,12 +331,9 @@ function interpolateVMD(curve, time, kf0, kf1) {
   const t = (time - kf0.frame) / frameDiff;
   if (t <= 0) return 0;
   if (t >= 1) return 1;
-
-  // Cubic Bezier interpolation (VMD format)
   const base = 0;
   const cpx1 = curve[base] / 127, cpy1 = curve[base + 1] / 127;
   const cpx2 = curve[base + 2] / 127, cpy2 = curve[base + 3] / 127;
-
   let guess = t;
   for (let i = 0; i < 12; i++) {
     const omg = 1 - guess;
@@ -400,15 +356,13 @@ function setupAnimation() {
     let bn;
     try { bn = vrm.humanoid?.getNormalizedBoneNode?.(vrmName); } catch (e) {}
     if (!bn) continue;
-    animBones.push({ mmdName, vrmName, track, isRoot: mmdName === 'センター', boneNode: bn });
+    animBones.push({ track, isRoot: mmdName === 'センター', boneNode: bn });
   }
-  animMorphs = [];
 }
 
 function applyVMDAtFrame(frame) {
   if (!vrm || !vmdData || animBones.length === 0) return;
-
-  animBones.forEach(({ mmdName, vrmName, track, isRoot, boneNode }) => {
+  animBones.forEach(({ track, isRoot, boneNode }) => {
     const len = track.length;
     if (frame <= track[0].frame) {
       const kf = track[0];
@@ -426,7 +380,6 @@ function applyVMDAtFrame(frame) {
     while (hi - lo > 1) { const m = (lo + hi) >> 1; if (track[m].frame <= frame) lo = m; else hi = m; }
     const kf0 = track[lo], kf1 = track[hi];
     const interp = interpolateVMD(kf0.interpolation, frame, kf0, kf1);
-
     _q0.fromArray(kf0.rotation); _q1.fromArray(kf1.rotation);
     const cos = _q0.x * _q1.x + _q0.y * _q1.y + _q0.z * _q1.z + _q0.w * _q1.w;
     if (cos < 0) { _q1.x = -_q1.x; _q1.y = -_q1.y; _q1.z = -_q1.z; _q1.w = -_q1.w; }
@@ -448,7 +401,6 @@ function applyVMDAtFrame(frame) {
 }
 
 // ─── Playback ─────────────────────────────────────────
-
 function startPlayback() {
   if (!vmdData || !vrm) return;
   clock.start();
@@ -459,7 +411,6 @@ function startPlayback() {
     sourceNode.buffer = audioBuffer;
     sourceNode.connect(gainNode);
     sourceNode.start(0);
-    audioStartTime = audioCtx.currentTime;
   }
   btnPlay.textContent = '⏸';
 }
@@ -478,7 +429,6 @@ function animate() {
         sourceNode.buffer = audioBuffer;
         sourceNode.connect(gainNode);
         sourceNode.start(0);
-        audioStartTime = audioCtx.currentTime;
       }
     }
     applyVMDAtFrame(animTime * VMD_FPS);
@@ -491,7 +441,6 @@ function animate() {
 }
 
 // ─── Play Button ──────────────────────────────────────
-
 btnPlay.addEventListener('click', async () => {
   if (audioCtx && audioCtx.state === 'suspended') await audioCtx.resume();
   if (isPlaying) {
@@ -503,8 +452,6 @@ btnPlay.addEventListener('click', async () => {
   }
 });
 
-// ─── Resize ───────────────────────────────────────────
-
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -512,7 +459,6 @@ window.addEventListener('resize', () => {
 });
 
 // ─── Init ─────────────────────────────────────────────
-
 async function init() {
   try {
     await loadVRM();
@@ -520,14 +466,12 @@ async function init() {
     setupAnimation();
     await loadAudio();
     animate();
-    // Auto-start
     setTimeout(startPlayback, 1500);
   } catch (err) {
     statusText.textContent = '❌ 加载失败: ' + err.message;
     console.error(err);
   }
 }
-
 init();
 </script>
 </body>
