@@ -293,6 +293,14 @@ const rimLight = new THREE.DirectionalLight(0x8888FF, 0.5);
 rimLight.position.set(-5, 3, -8);
 scene.add(rimLight);
 
+// Fill light from all angles
+const fill2 = new THREE.DirectionalLight(0xFFFF88, 0.4);
+fill2.position.set(-3, 5, 5);
+scene.add(fill2);
+const fill3 = new THREE.DirectionalLight(0x88FFFF, 0.3);
+fill3.position.set(3, 0, -5);
+scene.add(fill3);
+
 // Ground
 const groundGeo = new THREE.PlaneGeometry(30, 30);
 const groundMat = new THREE.MeshStandardMaterial({
@@ -353,10 +361,23 @@ async function loadVRM() {
   vrmScene.scale.set(scale, scale, scale);
 
   vrmScene.position.y = 0;
+  
+  // Force all meshes to use basic material for visibility testing
   vrmScene.traverse((child) => {
     if (child.isMesh) {
       child.castShadow = true;
       child.receiveShadow = true;
+      child.frustumCulled = false;
+      // Force material visible
+      if (child.material) {
+        if (Array.isArray(child.material)) {
+          child.material.forEach(m => { m.transparent = false; m.opacity = 1; m.depthWrite = true; });
+        } else {
+          child.material.transparent = false;
+          child.material.opacity = 1;
+          child.material.depthWrite = true;
+        }
+      }
     }
   });
 
@@ -375,6 +396,16 @@ async function loadVRM() {
   dbg(`VRM humanoid bones: ${vrmBones.join(', ')}`);
 
   setProgress(55, `VRM 模型加载完成 (${meshCount} 网格)`);
+
+  // Debug material types
+  const matTypes = {};
+  vrmScene.traverse(c => {
+    if (c.isMesh && c.material) {
+      const mats = Array.isArray(c.material) ? c.material : [c.material];
+      mats.forEach(m => { matTypes[m.type] = (matTypes[m.type]||0) + 1; });
+    }
+  });
+  dbg(`Materials: ${JSON.stringify(matTypes)}`);
 }
 
 // ─── VMD Load & Parse ────────────────────────────────────
